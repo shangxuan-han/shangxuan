@@ -1,0 +1,524 @@
+## This query looks into a (subtype,supertype) pair in both Akka and Java project;
+## Finds subtypes that access fields of their supertypes directly;
+## Divides the accesses into reads and writes
+## Publishes candidate subtypes that may violate encapsulated inheritance of their supertypes
+##       along with their read and write accesses, Java or Akka project and based on their
+##       revision categories 1--6, 6--11,12--25, 26--50, 50-99, >100
+
+p: Project = input;
+
+# for each superclass, #subclasses, #
+all: output sum[string][string] of int;
+candidates: output sum[string][string] of int;
+accesses: output sum[string][string] of int; # reads and writes
+writes: output sum[string][string] of int; # writes; reads = (accesses - writes)
+visited: map[string] of int;
+path := "";
+found := false;
+isAkkaProject := false;
+results: output collection[string][string] of string;
+results1: output collection[string] of string;
+results2: output collection[string][string][string] of string;
+logs : output collection of string;
+debuglogs: output collection[string][bool] of string;
+pathDeclKey := "";
+declKey := "";
+
+rCount := 0;
+sixOrless := 6;
+twelveOrless := 12;
+twentyfiveOrless := 25;
+fiftyOrless := 50;
+hundredOrless := 100;
+
+getFieldNames := function(decl: Declaration) : map[string] of string {
+    fields : map[string] of string;
+    foreach (i: int; def(decl.fields[i])) {
+        field := decl.fields[i].name;
+        fields[field] = field;
+    }
+    return fields;
+};
+
+getLocalVariables := function(method: Method) : map[string] of string {
+    variables : map[string] of string;
+    visit(method, visitor {
+        before expr : Expression -> {
+            if (expr.kind == ExpressionKind.VARDECL) {
+                foreach (i: int; def(expr.variable_decls[i])) {
+                    var := expr.variable_decls[i].name;
+                    variables[var] = var;
+                }
+            }
+        }
+        
+    });
+    return variables;
+};
+
+check1 := function(vname: string, dname: string) : bool {
+    if (strfind(".", vname) != -1) {
+        ls := splitall(vname, "\\.");
+        if (def(ls[0]) && match("^[A-Z]", ls[0]) && (ls[0] == dname))
+            return true;
+    } 
+    else if (match("^[A-Z]", vname)) {
+        if (vname == dname)
+            return true;
+    }
+    return false;
+};
+
+# nested classes
+nested: map[string] of string;
+parent_fields : map[string] of string;
+fields : map[string] of string;
+
+isThisExpr := function(vname: string) : bool {
+    if (strfind(".", vname) != -1) {
+        parts := splitall(vname, "\\.");
+        if (parts[0] == "this") {
+            # found vname that has this. , check in the fields of the class
+            vminusthis := "";
+            if(len(parts)>1)
+				vminusthis = format("%s", parts[1]);
+            for( i:=2 ; i < len(parts) - 1 ; i++)
+                vminusthis = format("%s.%s", vminusthis, parts[i]);
+                
+            if (!haskey(fields, vminusthis)) {
+                #logs << vname;
+                return true;
+            }
+        }
+    }    
+    return false;
+};
+
+akkaActors: map[string] of string;
+ptype := function() : string {
+    str := "";
+    if (haskey(akkaActors, declKey))
+        str = "akka";
+    else
+        str = "java";
+    return str;
+};
+
+dtype := function() : string {
+    str := "";
+    if (rCount >= sixOrless) {
+        str = "six";    
+    }  
+    if (rCount >= twelveOrless) {
+        str = "twelve";    
+    } 
+    if (rCount >= twentyfiveOrless) {
+        str = "twentyfive";    
+    } 
+    if (rCount >= fiftyOrless) {
+        str = "fifty";    
+    } 
+    if (rCount >= hundredOrless) {
+        str = "hundred";    
+    } 
+    return str;    
+};
+
+superFieldAccess := function(vname: string, parent: string,
+                            isNestedDecl: bool, variables: map[string] of string) : bool {
+    matched := false;
+    if (match(`^super\.`, vname)) {
+        matched = true;
+        #if (isAkkaProject)
+            accesses[ptype()][dtype()] << 1;
+    } else if ((strfind(".", vname) != -1) || match("^[A-Z]", vname)) {
+        if (check1(vname, parent)) {
+            matched = true;
+            #if (isAkkaProject)
+                accesses[ptype()][dtype()] << 1;
+        }
+    } else if (!haskey(variables, vname) &&
+                !haskey(fields, vname)) {
+            if ((isNestedDecl && haskey(parent_fields, vname))) {
+               matched = false;
+                
+            } else {
+                 matched = true;
+            #if (isAkkaProject)
+                accesses[ptype()][dtype()] << 1;
+            }
+    } else if (isThisExpr(vname)) {
+        matched = true;    
+        accesses[ptype()][dtype()] << 1;
+
+    }
+    return matched;
+};
+
+printDebugInfo := function(declName: string) {
+    nestedCls := false;
+    if (haskey(nested, declName)) {
+        nestedCls = true;
+    }
+    lpvars := keys(parent_fields);
+    str := "";
+    foreach (i: int; def(lpvars[i]))
+        str = format("%s,%s", str, parent_fields[lpvars[i]]);
+    #debuglogs[declName][nestedCls] << str;
+};
+
+# first figure out project is akka and also count revisions
+# all the actors that extends UntypedActor or the actors that extend UntypedActor
+
+visit(p, visitor {
+    before n: Project -> {
+    ifall (i: int; !match(`^java$`, lowercase(n.programming_languages[i]))) stop;
+    }
+	
+	before n: CodeRepository -> {
+	    lrcount := len(n.revisions);
+	    # there could be multiple code repositories.
+	    if (rCount < lrcount)
+	        rCount  = lrcount;
+	    snapshot := getsnapshot(n);
+		foreach (i: int; def(snapshot[i]))
+			visit(snapshot[i]);
+		stop;
+	}
+    
+    before decl: Declaration -> {
+        cls := decl.name;
+        parent := "";
+        foreach (p: int; def(decl.parents[p])) {
+            if (decl.parents[p].kind == TypeKind.CLASS ) {
+                parent = decl.parents[p].name;
+                if (parent == "UntypedActor" || parent == "TypedActor" || haskey(akkaActors, parent))
+                    akkaActors[cls] = cls;
+            }
+        }
+    }
+});
+
+visit(p, visitor {
+	before n: Project -> {
+	    ifall (i: int; !match(`^java$`, lowercase(n.programming_languages[i]))) stop;
+	}
+	
+	before n: CodeRepository -> {
+		snapshot := getsnapshot(n);
+		foreach (i: int; def(snapshot[i]))
+			visit(snapshot[i]);
+		stop;
+	}
+
+	before chfl: ChangedFile -> path = chfl.name; 
+	after chfl: ChangedFile -> path = "";
+	
+	before decl: Declaration -> {
+	    #printDebugInfo(decl.name);
+	    declKey = decl.name;
+	    pathDeclKey = format("%s!%s", path, decl.name);
+	    if (!haskey(visited, pathDeclKey) && decl.kind == TypeKind.CLASS) {
+	        if (len(decl.parents) > 0) {
+	            hasSuper := false;
+	            parent := "";
+	            foreach (p: int; def(decl.parents[p])) {
+	                # check if at least one parent is a class
+	                if (decl.parents[p].kind == TypeKind.CLASS ) {
+	                    hasSuper = true;
+	                    parent = decl.parents[p].name;
+	                }
+	            }
+	            if (hasSuper) {
+	                #if (isAkkaProject)
+                        all[ptype()][dtype()] << 1;
+                    #results << pathDeclKey;
+    	            visited[pathDeclKey] = 1;
+    	            # collect all fields in the current class
+    	            fields = getFieldNames(decl);
+    	            variables : map[string] of string;
+    	            mname := "";
+    	            
+    	            isNestedDecl := false;
+    	            # check for the parent fields of current nested decl
+    	            if (haskey(nested, decl.name)) {
+    	                isNestedDecl = true;
+    	            }
+    	            
+    	            isCandidate := false;
+    	            foreach (mi: int; def(decl.methods[mi])) {
+    	                method := decl.methods[mi];
+    	                mname = method.name;
+    	                foreach (p: int; def(method.arguments[p])) {
+        	                argument := method.arguments[p].name;
+                            variables[argument] = argument;
+        	            }
+        	            
+        	            visit(method, visitor {
+        	                before stmt : Statement -> {
+            	                if (def(stmt.variable_declaration))
+            	                    variables[stmt.variable_declaration.name] = stmt.variable_declaration.name;
+            	            }
+            	            before expr: Expression -> {
+            	                if (expr.kind == ExpressionKind.VARDECL) {
+                                    foreach (i: int; def(expr.variable_decls[i])) {
+                                        var := expr.variable_decls[i].name;
+                                        variables[var] = var;
+                                    }
+                                    if (def(expr.variable))
+                                        variables[expr.variable] = expr.variable;
+                                }
+            	            }
+        	            });
+
+                        foundAtleastOnce := false;
+        	            visit(method, visitor {
+                	        before expr: Expression -> {
+                	            #logs << format("%s", expr); !found && 
+                	            vname := "";
+                                if (expr.kind == ExpressionKind.VARACCESS) 
+                                {
+                                    if (len(expr.expressions) > 0) {
+                                        # actually the variable name exists here
+                                        vname = "";
+                                        visit(expr.expressions[0], visitor {
+                                            before subexpr: Expression -> {
+                                                if (subexpr.kind == ExpressionKind.VARACCESS) {
+                                                    if(len(subexpr.expressions) > 0){
+                                                        vname = subexpr.variable;
+                                                        logs << "there exist1";
+                                                        visit(subexpr.expressions[0]);
+                                                    }
+                                                    else{
+                                                        vname = subexpr.variable;
+                                                        stop;
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        if (vname != "") {
+                                            found = superFieldAccess(vname, parent, isNestedDecl, variables);
+                                        } else {
+                                            vname = expr.variable;
+                                            found = superFieldAccess(vname, parent, isNestedDecl, variables);    
+                                        }
+                                    } else {
+                                        vname = expr.variable;
+                                        found = superFieldAccess(vname, parent, isNestedDecl, variables);
+                                    }
+                                } else if (expr.kind == ExpressionKind.OP_DEC ||
+                                            expr.kind == ExpressionKind.OP_INC) {
+                                    if (len(expr.expressions) > 0) {
+                                        # expecting only one operand for inc/dec
+                                        operandExpr := expr.expressions[0];
+                                        if (operandExpr.kind == ExpressionKind.VARACCESS) {
+                                            operand := "";
+                                            if (len(operandExpr.expressions) > 0) {
+                                                operand = "";
+                                                visit(operandExpr.expressions[0], visitor {
+                                                    before subexpr: Expression -> {
+                                                        if (subexpr.kind == ExpressionKind.VARACCESS) {
+                                                            if(len(subexpr.expressions) > 0){
+                                                                operand = subexpr.variable;
+                                                                logs << "there exist2";
+                                                                visit(subexpr.expressions[0]);
+                                                            }
+                                                            else{
+                                                                operand = subexpr.variable;
+                                                                stop;
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                                if (operand != "") {
+                                                    found = superFieldAccess(operand, parent, isNestedDecl, variables);
+                                                    if (found) {
+                                                        #if (isAkkaProject) {
+                                                            writes[ptype()][dtype()] << 1;
+                                                            #results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                        #}
+                                                    }
+                                                } else {
+                                                    operand = operandExpr.variable;
+                                                    found = superFieldAccess(operand, parent, isNestedDecl, variables);
+                                                    if (found) {
+                                                        #if (isAkkaProject) {
+                                                            writes[ptype()][dtype()] << 1;
+                                                            #results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                        #}
+                                                    }
+                                                }
+                                            } else {
+                                                operand = operandExpr.variable;
+                                                found = superFieldAccess(operand, parent, isNestedDecl, variables);
+                                                if (found) {
+                                                    #if (isAkkaProject) {
+                                                        writes[ptype()][dtype()] << 1;
+                                                    #    results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                    #}
+                                                }
+                                            }
+                                            stop;
+                                        }
+                                    }
+                                } 
+                                else if(expr.kind == ExpressionKind.METHODCALL){
+                                    rcv := "";
+                                    if ( len(expr.expressions)>0  
+                                         && def(expr.expressions[0])) {
+                                        rcvExpr := expr.expressions[0];
+                                        #logs << format("+++++%s", rcvExpr);
+                                        if (rcvExpr.kind == ExpressionKind.VARACCESS) {
+                                            if (len(rcvExpr.expressions) > 0) {
+                                                visit(rcvExpr.expressions[0], visitor {
+                                                    before subexpr: Expression -> {
+                                                        if (subexpr.kind == ExpressionKind.VARACCESS) {
+                                                            if(len(subexpr.expressions) > 0){
+                                                                rcv = subexpr.variable;
+                                                                logs << "there exist3";
+                                                                visit(subexpr.expressions[0]);
+                                                            }
+                                                            else{
+                                                                rcv = subexpr.variable;
+                                                                stop;
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                                if (rcv != "") {
+                                                    found = superFieldAccess(rcv, parent, isNestedDecl, variables);
+                                                    if (found) {
+                                                        #if (isAkkaProject) {
+                                                            writes[ptype()][dtype()] << 1;
+                                                        #    results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                        #}
+                                                    }
+                                                }
+                                            }
+                                        else {
+                                                rcv = rcvExpr.variable;
+                                                found = superFieldAccess(rcv, parent, isNestedDecl, variables);
+                                                if (found) {
+                                                    #if (isAkkaProject) {
+                                                        writes[ptype()][dtype()] << 1;
+                                                    #    results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                    #}
+                                                }
+                                        }
+                                    }
+                                }
+                            }
+                                else if (
+                                    expr.kind == ExpressionKind.ASSIGN ||
+                                    expr.kind == ExpressionKind.ASSIGN_ADD ||
+                                    expr.kind == ExpressionKind.ASSIGN_BITAND ||
+                                    expr.kind == ExpressionKind.ASSIGN_BITOR ||
+                                    expr.kind == ExpressionKind.ASSIGN_BITXOR ||
+                                    expr.kind == ExpressionKind.ASSIGN_DIV ||
+                                    expr.kind == ExpressionKind.ASSIGN_LSHIFT ||
+                                    expr.kind == ExpressionKind.ASSIGN_MOD ||
+                                    expr.kind == ExpressionKind.ASSIGN_MULT ||
+                                    expr.kind == ExpressionKind.ASSIGN_RSHIFT ||
+                                    expr.kind == ExpressionKind.ASSIGN_SUB ||
+                                    expr.kind == ExpressionKind.ASSIGN_UNSIGNEDRSHIFT 
+                                    ) {
+                                    # LHS expression is at index 0
+                                    if ( len(expr.expressions)>0  && def(expr.expressions[0])) {
+                                        # LHS should directly access the super field
+                                        lhsExpr := expr.expressions[0];
+                                        if (lhsExpr.kind == ExpressionKind.VARACCESS) {
+                                            lhs := "";
+                                            if (len(lhsExpr.expressions) > 0) {
+                                                visit(lhsExpr.expressions[0], visitor {
+                                                    before subexpr: Expression -> {
+                                                        if (subexpr.kind == ExpressionKind.VARACCESS) {
+                                                            if(len(subexpr.expressions) > 0){
+                                                                lhs = subexpr.variable;
+                                                                logs << "there exist4";
+                                                                visit(subexpr.expressions[0]);
+                                                            }
+                                                            else{
+                                                                lhs = subexpr.variable;
+                                                                stop;
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                                if (lhs != "") {
+                                                    found = superFieldAccess(lhs, parent, isNestedDecl, variables);
+                                                    if (found) {
+                                                        #if (isAkkaProject) {
+                                                            writes[ptype()][dtype()] << 1;
+                                                        #    results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                        #}
+                                                    }
+                                                } else {
+                                                    lhs = lhsExpr.variable;
+                                                    found = superFieldAccess(lhs, parent, isNestedDecl, variables);
+                                                    if (found) {
+                                                        #if (isAkkaProject) {
+                                                            writes[ptype()][dtype()] << 1;
+                                                        #    results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                        #}
+                                                    }
+                                                }
+                                            } else {
+                                                lhs = lhsExpr.variable;
+                                                found = superFieldAccess(lhs, parent, isNestedDecl, variables);
+                                                if (found) {
+                                                    #if (isAkkaProject) {
+                                                        writes[ptype()][dtype()] << 1;
+                                                    #    results2[p.project_url][pathDeclKey][method.name] << format("%s", expr);
+                                                    #}
+                                                }
+                                            }
+                                            stop;
+                                        }
+                                    }
+                                }
+                                if (found)
+                                    foundAtleastOnce = true;
+                            }     
+        	            });
+            	        if (foundAtleastOnce) {
+            	            isCandidate = true;
+            	            #candidates << 1;
+                	        found = false;
+                	        foundAtleastOnce = false;
+                	        #results1[p.project_url] << pathDeclKey;
+            	        }
+            	        clear(variables);
+    	            }
+    	            if (isCandidate)
+    	                    candidates[ptype()][dtype()] << 1;
+	            } else {
+	                # save super fields if any
+	                fields = getFieldNames(decl);
+	            }
+	        } else {
+	            # save super fields if any
+	           fields = getFieldNames(decl);
+	        }
+	    }
+	    # save nested decl names
+	    if (len(decl.nested_declarations) > 0) {
+	        foreach(d: int; def(decl.nested_declarations[d])) {
+	            ndecl := decl.nested_declarations[d];
+	            nested[ndecl.name] = ndecl.name;
+	        }
+	        # save parent fields for nested decls
+	        fkeys := keys(fields);
+	        foreach (nfi: int; def(fkeys[nfi])) {
+	            nf := fields[fkeys[nfi]];
+	            parent_fields[nf] = nf;
+	        }
+	    }
+	}
+	after decl: Declaration -> {
+	    if (len(decl.nested_declarations) > 0) {
+	        clear(nested);
+	        clear(parent_fields);
+	    }
+	}
+	 
+});

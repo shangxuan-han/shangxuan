@@ -1,0 +1,19 @@
+Before analysis, you should know the data we have:
+1. Number of leaking class for each project in small data set.
+2. Number of bugs for each project in small data set.
+
+(Hypothesis)Right now, we are looking for if there exists a relationship between leaking number and bug number:
+    At first, I was planning to use t-test(p value used in this test) to analyze the relationship. However, t-test is used to find 
+    whether or not two independent populations have different mean values on some measure. Here, we are not finding the mean of leaking
+    class and mean of bugs. So we need to use another method to test our target. According to the paper "Assertions Are Strongly 
+    Correlated with Test Suite Effectiveness", I find another method called "correlation coefficient". This measurement will compute
+    a coefficient r, which represents the strength and direction of two variable's linear relationship. If this r is closed to 1 or -1, then
+    there is a strong correlation. There is a criteria of the explaination of r at: http://www.dummies.com/how-to/content/how-to-interpret-a-correlation-coefficient-r.html.
+    Obeying this method, I get our r = 0.4506(Correlation_coefficient_analysis.jpg on bitbucket). Based on the criteria, it is a weak relationship. Depending on correlation coefficient, we
+    cannot prove that there is a relationship between leaking class and number of bugs.
+    
+    On the other side, recalling the method I used in DUI problem, I used the linear regression method to find out the relationship between
+    two variable. So this time, I also do this method. On the picture of "linear_regression_analysis.jpg" on bitbucket, I get the information
+    of the estimated linear regression. There is a data we need to consider: Rsquare, which represents how good this linear regression can
+    explain the data, 1 is best and 0 is lowest. We get Rsquare=0.2. this is too low. So this can also prove that there is not a good linear 
+    regression can explain our data well. In another word, we cannot find a good relationship between leaking class and number of bugs.

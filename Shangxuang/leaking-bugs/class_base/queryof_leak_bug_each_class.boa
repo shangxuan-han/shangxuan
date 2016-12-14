@@ -1,0 +1,1323 @@
+######################
+# Output Aggregators #
+######################
+counts: output sum[string] of int; 
+counts1: output sum[string][string][string] of int;
+#############
+# Constants #
+#############
+#array of all the primitive types 
+primitives: array of string = {"byte", "short", "int", "long", "float", "double", "boolean", "char", "String"};
+p: Project = input; 
+
+###########
+# Globals # 
+###########
+parentDeclMap: map[string] of Declaration; 
+
+#####################
+# General Functions #
+#####################
+
+#escapes any special regex characters in string s
+escapeRegex := function(s: string) : string {
+    escaped: string = s; 
+    
+    escaped = strreplace(escaped, ".", "\\.", true);
+    escaped = strreplace(escaped, "[", "\\[", true);
+    escaped = strreplace(escaped, "]", "\\]", true);
+    escaped = strreplace(escaped, "$", "\\$", true);
+    
+    return escaped; 
+};
+
+#buildString will construct take a "stringArray" of the from element1#element2#element3 and add element to that "array"
+buildString := function(stringArray: string, element: string) : string {
+	s: string = "";
+	#The standard cases
+	if(def(stringArray) && def(element)) {
+		if(len(element) == 0 && len(stringArray) > 0) {
+			return stringArray;
+		}
+		else if(len(element) > 0 && len(stringArray) > 0) {
+			
+			if(match("#" + element + "#", stringArray)) {
+				return stringArray; 
+			}
+			return stringArray + "#" + element;
+		}
+		else if(len(element) > 0 && len(stringArray) == 0) {
+			return element; 
+		}
+	}
+	#the error cases
+	else if(def(stringArray) && !def(element)) {
+		return stringArray;
+	}
+	else if(!def(stringArray) && def(element)) {
+		return element; 
+	}
+	else {
+		return "";
+	}
+	return s; 
+};
+
+###########################################
+## Finding Parent Classes & Their Fields ##
+###########################################
+#SOUNDNESS: The ambiguity in namespaces can cause us to miss leaks through parents in different namespaces 
+#the function returns a map from children's names to the parents actual declaration. If a class has no parent it will not be added. 
+buildParentMap := function(p: Project): map[string] of Declaration {
+	#output 
+	parentMap: map[string] of Declaration; 
+	
+	#first we gather a map of childstring -> parentstring 
+	parentMapStrings: map[string] of string; 
+	visit(p, visitor{
+        # only look at the latest snapshot
+    	before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+        	foreach (i: int; def(snapshot[i])) {
+        		visit(snapshot[i]);
+        	}
+        	stop;
+    	}
+    	
+    	before namespace: Namespace -> {
+    		foreach(i: int; namespace.declarations[i]) {
+    			class: Declaration = namespace.declarations[i];
+    			if(class.kind != TypeKind.CLASS) {
+    				continue; 
+    			} 
+    			foreach(j: int; class.parents[j]) {
+    				if(class.parents[j].kind == TypeKind.CLASS) {
+    					#there is no way for us to know the parent's namespace - we assume that they share a namespace 
+    					#TODO find a solution. 
+    					parentMapStrings[namespace.name + "." + class.name] = namespace.name + "." + class.parents[j].name;
+    				}
+    			}
+    		}
+    	}		
+	});
+	
+	#now we create a map that is the reverse of the parent strings map.
+	reversedMap: map[string] of string; 
+	classes: array of string = keys(parentMapStrings); 
+	foreach(i: int; classes[i]) {
+		curClass: string = classes[i];
+		curParent: string = parentMapStrings[curClass];
+		reversedMap[curParent] = curClass; 
+	}
+	clear(parentMapStrings);
+	
+	#create the actual output map 
+	visit(p, visitor{
+        # only look at the latest snapshot
+    	before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+        	foreach (i: int; def(snapshot[i])) {
+        		visit(snapshot[i]);
+        	}
+        	stop;
+    	}
+    	before namespace: Namespace -> {
+    		foreach(i: int; namespace.declarations[i]) {
+    			class: Declaration = namespace.declarations[i];
+    			if(class.kind != TypeKind.CLASS) {
+    				continue; 
+    			}
+    			if(def(reversedMap[namespace.name + "." + class.name])) {
+    				childClass: string = reversedMap[namespace.name + "." + class.name]; 
+    				parentMap[childClass] = class; 
+    			}
+    		}
+    	}
+    			
+	});
+
+	return parentMap;
+};
+
+##########################
+# Shangxuang's Functions #
+##########################
+#SOUNDNESS: I've never looked into this section of the query with any level of detail. If it is erroneously marking things as not compatible 
+#then we have a soundness issue 
+
+#Given a string representation of a variable type, this function will return true if that type is a primitive type
+#primitive types are defined in the "primitives" global variable. 
+isPrimitive := function(s: string) : bool {
+    foreach(i: int; primitives[i]) {
+        if(match("^" + primitives[i] + "$", s)) {
+            return true;    
+        }
+    }
+    return false; 
+};
+
+
+### This function return if arg1 is subtype of arg2 or opposite. return "" if no such type in the project or return "no relationship".
+
+## Attention: This function can only detect the user defined classes, which means that it cannot find the inherited classes from in library.
+#counts: output sum[string] of int;
+interface: output collection[string] of string;
+logs: output collection of string;
+#num: output sum of int;
+#hier: map[string] of string;
+#st: stack of string;
+name := "";
+str :="";
+ele :="";
+check : set of string;
+answer := false;
+#out: output collection of string;
+nosub1 :=false;
+nosub2 :=false;
+
+numChecks: int = 0; 
+totalChecks: int = 10; 
+
+standard := function(type1: string) : string {
+    ret:=type1;
+    if(type1=="Integer")
+        ret="int";
+    if(type1=="Double")
+        ret="double";
+    if(type1=="Character")
+        ret="char";
+    if(type1=="string")
+        ret="String";
+    if(type1=="Boolean")
+        ret="boolean";
+    if(type1=="Byte")
+        ret="byte";
+    if(type1=="Short")
+        ret="short";
+    if(type1=="Long")
+        ret="long";
+    if(type1=="Float")
+        ret="float";
+    return ret;
+};
+compareTo := function(type11: string, type22: string, node: Project, namespace: Namespace) : string {
+	#defaults to true for soundness
+    retVal := "true";
+    answer = false;
+    nosub1 =false;
+    nosub2 =false;
+    Array1: array of string; 
+    Array2: array of string;
+    type1:="";
+    type2:="";
+    if((match(">",type11)&&match("<",type11))||(match(">",type22)&&match("<",type22))){
+        return "There exist generic type.";
+    }
+    else{
+	    if((match("\\[\\]$",type11)||match("\\[\\]$",type22))&&
+	    (!(match("\\[\\]$",type11)&&match("\\[\\]$",type22)))){
+	        return "false";
+	    }
+	    else{
+		    if(match("\\[\\]$",type11)&&match("\\[\\]$",type22)){
+		        Array1 = splitall(type11, "\\[");
+		        Array2 = splitall(type22, "\\[");
+		        type1=standard(Array1[0]);
+		        type2=standard(Array2[0]);
+		    }
+		    else{
+			    type1=standard(type11);
+			    type2=standard(type22);
+		    }
+
+		    if((isPrimitive(type1)||isPrimitive(type2))&&(!(isPrimitive(type1)&&isPrimitive(type2)))){
+		            return "false";
+		    }
+		    else if(isPrimitive(type1)&&isPrimitive(type2)) {
+		        if(type1=="int"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="char"){
+		            if (type2=="char")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="byte"){
+		            if (type2=="byte")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="double"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"
+		            ||type2=="double"||type2=="long"||type2=="float")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="short"){
+		            if (type2=="byte"||type2=="short")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="long"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"||type2=="long")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="float"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"||type2=="long"||type2=="float")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="boolean"){
+		            if (type2=="boolean")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="String"){
+		            if (type2=="String")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		    }
+		}
+	}
+    
+    
+    qualifiedNameType1: string = type1;
+    qualifiedNameType2: string = type2;
+    
+    
+    type1Found: bool = false; 
+    type2Found: bool = false; 
+    moreParents: bool = true; 
+	curClass: Declaration;
+	if(def(parentDeclMap[namespace.name + "." + type1])) {
+		curClass = parentDeclMap[namespace.name + "." + type1];
+	}
+	dupeMap: map[string] of bool; 
+	while(moreParents && def(curClass)) {
+		if(type1 == curClass.name && !type2Found) {
+			type1Found = true; 
+		}
+		if(type2 == curClass.name && !type1Found) {
+			type2Found = true;
+		}
+		if(type1 == curClass.name && type2Found) {
+			return type2;
+		}
+		if(type2 == curClass.name && type1Found) {
+			return type1;
+		}
+		
+		if(def(dupeMap[namespace.name + "." + curClass.name])) {
+			break; 
+		}
+		else{
+			dupeMap[namespace.name + "." + curClass.name];
+		}
+		
+		if(def(parentDeclMap[namespace.name + "." + curClass.name])) {
+			parent: Declaration = parentDeclMap[namespace.name + "." + curClass.name];
+			curClass = parent; 
+		}
+		else {
+			moreParents = false; 
+		}
+	}
+    name = "";
+    str ="";
+    ele ="";
+    clear(check);
+    answer = false;
+    nosub1 =false;
+    nosub2 =false;
+    return retVal;
+};
+
+
+#uses shangxuang's functions. returns true if type1 is compatible with type2
+isCompatibleType := function(type1: string, type2: string, namespace: Namespace): bool {
+	
+	#escape regex 
+	t1: string = escapeRegex(type1);
+	t2: string = escapeRegex(type2);
+	
+	compareToResult: string = "";
+	compareToResult = compareTo(t1, t2, p, namespace);
+	
+	if(match(t1, compareToResult)) {
+		return true; 
+	}
+	else if(match(t2, compareToResult)) {
+		return false; 
+	}
+	#if the isCompatible explicitly says not compatible
+	else if(match("^false$", compareToResult)){
+		return false; 
+	}
+	#default to returning true
+	return true; 
+};
+
+#####################
+# REWRITE FUNCTIONS #
+#####################
+
+#returns a stack of all the return statements in this method 
+getReturnStatements := function(method: Method) : stack of Statement {
+	statements: stack of Statement; 
+	visit(method, visitor {
+		before s: Statement -> {
+			if(s.kind == StatementKind.RETURN) {
+				push(statements, s);		
+			}
+		}		
+	});
+	return statements; 
+};
+
+#Given a return statement it returns each variable that might be leaked through this return 
+getPotentialReturnLeaks := function(statement: Statement): stack of string {
+	potentialLeaksStack: stack of string; 
+	visit(statement, visitor {
+		before e: Expression -> {
+			if(e.kind == ExpressionKind.VARACCESS) {
+				push(potentialLeaksStack, e.variable);
+			}
+		}
+	});
+	return potentialLeaksStack;
+};
+
+
+#searches this method for the given variable. If the variable is found the type of the variable is returned
+#otherwise returns a string "null"
+findVardeclInMethod := function(method: Method, curVar: string): string {
+	varType: string = "null"; 
+	
+	visit(method, visitor {
+		before e: Expression -> {
+			if(e.kind == ExpressionKind.VARDECL) {
+				foreach(i: int; e.variable_decls[i]) {
+					if(e.variable_decls[i].name == curVar) {
+						varType = e.variable_decls[i].variable_type.name; 
+						stop; 
+					}
+				}
+			}
+		}
+	});
+	
+	return varType; 
+};
+
+
+#searches the paramters of this method for the given variable. If the variable is found the type of the variable is returned
+#otherwise returns a string "null"
+findParam := function(method: Method, curVar: string): string {
+	varType: string = "null"; 
+	
+	foreach(i: int; method.arguments[i]) {
+		if(method.arguments[i].name == curVar) {
+			varType = method.arguments[i].variable_type.name; 
+			break; 
+		}
+	}
+	
+	return varType; 
+};
+
+
+#given a variable type will return true if non-primitive, false if primitive 
+isNonPrimitive := function(varType: string): bool {
+	foreach(i: int; primitives[i]) {
+		if(primitives[i] == varType) {
+			return false; 
+		}
+	}
+	return true; 
+};
+
+
+#finds if the given variable is a non-primitive field (doesn't consider superfields)
+findNonPrimitiveField := function(namespace: Namespace, class: Declaration, curVar: string): string {
+	varType: string = "null";
+	isNonPrimitiveField: bool = false;
+	#check against the fields of this class 
+	foreach(i: int; class.fields[i]) {
+		if(class.fields[i].name == curVar && isNonPrimitive(class.fields[i].variable_type.name)) {
+			isNonPrimitiveField = true; 
+			varType = class.fields[i].variable_type.name; 
+			break; 
+		}
+	}
+	return varType;
+};
+
+
+#finds if the given variable is a non-primitive superfield 
+findNonPrimitiveSuperField := function(namespace: Namespace, class: Declaration, curVar: string): string {
+	varType: string = "null";
+	isNonPrimitiveField: bool = false;
+	
+	moreParents: bool = true; 
+	curClass: Declaration = class; 
+	dupeMap: map[string] of bool; 
+	while(moreParents) {
+		
+		foreach(k: int; curClass.fields[k]) {
+			if(curClass.fields[k].name == curVar && isNonPrimitive(curClass.fields[k].variable_type.name)) {
+				isNonPrimitiveField = true; 
+				varType = curClass.fields[k].variable_type.name; 
+				break; 
+			}
+		}		
+		
+		if(isNonPrimitiveField) {
+			break; 
+		}
+		if(def(dupeMap[namespace.name + "." + curClass.name])) {
+			break; 
+		}
+		else{
+			dupeMap[namespace.name + "." + curClass.name];
+		}
+		if(def(parentDeclMap[namespace.name + "." + curClass.name])) {
+			parent: Declaration = parentDeclMap[namespace.name + "." + curClass.name];
+			curClass = parent; 
+		}
+		else {
+			moreParents = false; 
+		}
+	}	
+	return varType; 	
+		
+};
+
+
+#tries to find if any of the variables in the potentialLeaks stack is leaking. 
+searchForLeaks := function(namespace: Namespace, class: Declaration, method: Method, potentialLeaks: stack of string) : bool {
+	leakFound: bool = false; 
+	#eliminate any locally scoped variables 
+	localVarEliminationStack: stack of string;
+	while(len(potentialLeaks) != 0) {
+		potentialLocalVar: string = pop(potentialLeaks);
+		#find if this variable is declared in this method 
+		isDeclaredInMethod: string = findVardeclInMethod(method, potentialLocalVar);
+		if(isDeclaredInMethod == "null") {
+			push(localVarEliminationStack, potentialLocalVar);
+		}
+	}
+
+	#eliminate any parameter variables 
+	parameterEliminationStack: stack of string; 
+	while(len(localVarEliminationStack) != 0) {
+		potentialParamVar: string = pop(localVarEliminationStack);
+		#find if this var is a parameter
+		isParamVar: string = findParam(method, potentialParamVar);
+		if(isParamVar == "null") {
+			push(parameterEliminationStack, potentialParamVar);
+		}
+	}
+
+	#try to match to a field - add back to potential leaks if not matched 
+	fieldMatchStack: stack of string;
+	while(len(parameterEliminationStack) != 0) {
+		potentialFieldVar: string = pop(parameterEliminationStack);
+		isNonPrimitiveField: string = findNonPrimitiveField(namespace, class, potentialFieldVar);
+		if(isNonPrimitiveField != "null") {
+			leakFound = true; 
+			break; 
+		}
+		else {
+			push(fieldMatchStack, potentialFieldVar);
+		}
+	}
+	
+	#to to match a superfield 
+	while(len(fieldMatchStack) != 0) {
+		potentialSuperFieldVar: string = pop(fieldMatchStack);
+		isNonPrimitiveSuperField: string = findNonPrimitiveSuperField(namespace, class, potentialSuperFieldVar);
+		if(isNonPrimitiveSuperField != "null") {
+			leakFound = true; 
+			break; 
+		}
+	}
+	
+	return leakFound; 	
+};
+
+#This visitor should be run on statements of kind "Return". Before running on a return statement clear the 
+#returnVars string. Requires the returnVars global variable to function 
+returnVars: string; 
+getReturnVars := visitor {
+	before expression: Expression -> {
+		if(expression.kind == ExpressionKind.VARACCESS) {
+	        returnVars = buildString(returnVars, expression.variable);
+		}
+	}
+};
+
+#gets a map of immediate aliases for variables in this method 
+getAliases := function(method: Method, var: string): stack of string{
+	curVar: string = escapeRegex(var);
+	aliases: stack of string; 
+	foreach(i: int; method.statements[i]) {
+		curStatement: Statement = method.statements[i];
+
+		visit(curStatement, visitor {
+			before e: Expression -> {
+				alias: string; 
+				argumentVars: string; 
+				arguments: array of string; 
+				#check assign expressions 
+				if(e.kind == ExpressionKind.ASSIGN) {
+					alias = e.expressions[0].variable;
+					returnVars = "";
+					visit(e.expressions[1], getReturnVars);
+					if(match(curVar, returnVars)) {
+						push(aliases, alias);
+					}
+				}
+				#variable declarations 
+				else if(e.kind == ExpressionKind.VARDECL) {
+					foreach(j:int; e.variable_decls[j]) {
+						alias = e.variable_decls[j].name;
+						returnVars = "";
+						visit(e.variable_decls[j].initializer, getReturnVars);
+						if(match(curVar, returnVars)) {
+							push(aliases, alias);
+						}
+					}
+				}
+				#parameters to methodcalls
+				else if(e.kind == ExpressionKind.METHODCALL) {
+					argumentVars = "";
+					foreach(j: int; e.method_args[j]) {
+						returnVars = "";
+						visit(e.method_args[j], getReturnVars); 
+						argumentVars = buildString(argumentVars, returnVars);
+					}
+					if(match(curVar, argumentVars)) {
+						arguments = splitall(argumentVars, "#");
+						foreach(j: int; arguments[j]) {
+							#not worth self if check 
+							push(aliases, arguments[j]);
+						}
+					}
+				}
+				#parameters to new expressions 
+				else if(e.kind == ExpressionKind.NEW) {
+					argumentVars = "";
+					foreach(j: int; e.expressions[j]) {
+						returnVars = "";
+						visit(e.expressions[j], getReturnVars);
+						argumentVars = buildString(argumentVars, returnVars);
+					}
+					if(match(curVar, argumentVars)) {
+						arguments = splitall(argumentVars, "#");
+						foreach(j: int; arguments[j]) {
+							push(aliases, arguments[j]);
+						}
+					}			
+				}				
+			}			
+		});
+	}
+	return aliases;
+};
+
+#tries to see if any of the variables in the potentialLeaks stack is leaking through aliases (doesn't do a primary search)
+searchForAliasLeaks := function(namespace: Namespace, class: Declaration, method: Method, potentialLeaks: stack of string): bool {
+	leakFound: bool = false; 
+	
+	#go through each potentially leaking variable 
+	while(len(potentialLeaks) != 0) {
+		curVar: string = pop(potentialLeaks);
+		#try to match it to the three types to attempt to find type information 
+		varType: string = "";
+		typeFound: bool = false; 
+		#check if declared in method 
+		isDeclaredInMethod: string = findVardeclInMethod(method, curVar);
+		if(isDeclaredInMethod != "null") {
+			varType = isDeclaredInMethod; 
+			typeFound = true; 
+		}
+		#check if param 
+		if(!typeFound) {
+			isParam: string = findParam(method, curVar);
+			if(isParam != "null") {
+				varType = isParam; 
+				typeFound = true; 
+			}
+		}
+		#check if field 
+		if(!typeFound) {
+			isField: string = findNonPrimitiveField(namespace, class, curVar);
+			if(isField != "null") {
+				varType = isField; 
+				typeFound = true; 
+			}
+		}
+		#check if superfield 
+		if(!typeFound) {
+			isSuperField: string = findNonPrimitiveSuperField(namespace, class, curVar);
+			if(isSuperField != "null") {
+				varType = isSuperField; 
+				typeFound = true; 
+			}
+		}
+		
+		#at this point we have decided on the type, or not been able to find it. 
+		#do the alias searching 
+		originalVarName: string = curVar; 
+		originalVarType: string = varType; 
+		
+		dupeMap: map[string] of bool; 
+		
+		aliasStack: stack of string = getAliases(method, originalVarName);
+		longTermAliasStack: stack of string; 
+		
+		while(len(aliasStack) != 0) {
+			curAlias: string = pop(aliasStack);
+			if(def(dupeMap[curAlias])) {
+				continue;
+			} 
+			dupeMap[curAlias] = true;
+			
+			#Do the actual matching 
+			foundAliasMatch: bool = false; 
+			aliasType: string = "";
+			aliasInMethod: string = findVardeclInMethod(method, curAlias);
+			aliasType = aliasInMethod; 
+			if(aliasInMethod != "null") {
+				foundAliasMatch = true; 
+			}
+			if(!foundAliasMatch) {
+				aliasInParam: string = findParam(method, curAlias);
+				aliasType = aliasInParam;
+				if(aliasInParam != "null") {
+					foundAliasMatch = true; 
+				}
+			}
+			if(!foundAliasMatch) {
+				aliasInField: string = findNonPrimitiveField(namespace, class, curAlias);
+				if(aliasInField != "null") {
+					foundAliasMatch = true; 
+					aliasType = aliasInField; 
+					if(isCompatibleType(aliasType, originalVarType, namespace)) {
+						leakFound = true;
+						return true; 
+					}
+				}
+			}
+			#check if superfield 
+			if(!foundAliasMatch) {
+				aliasInSuperField: string = findNonPrimitiveSuperField(namespace, class, curAlias);
+				if(aliasInSuperField != "null") {
+					aliasType = aliasInSuperField; 
+					if(isCompatibleType(aliasType, originalVarType, namespace)) {
+						leakFound = true;
+						return true; 
+					}
+				}
+			}
+			#only gather new aliases if this alias is compatible with the original type, or we were unable to find a type 
+			if(isCompatibleType(aliasType, originalVarType, namespace) || aliasType == "") {
+				#gather aliases and move on
+				newAliasStack: stack of string = getAliases(method, curAlias);
+				while(len(newAliasStack) != 0) {
+					newAlias: string = pop(newAliasStack);
+					if(!def(dupeMap[newAlias])) {
+						push(aliasStack, newAlias);	
+					}
+				}
+			}
+		}
+	}
+	return leakFound; 
+};
+
+#gets every methodcall expression in this method
+getMethodCalls := function(method: Method) : stack of Expression {
+	methodStack: stack of Expression; 
+	visit(method, visitor {
+		before e: Expression -> {
+				if(e.kind == ExpressionKind.METHODCALL) {
+					push(methodStack, e);		
+				}
+				else if(e.kind == ExpressionKind.NEW) {
+					push(methodStack, e);		
+				}
+			}
+	});
+	return methodStack; 
+};
+
+
+#given an expression returns all of the variables that might be leaking by being passed as parameters to a methodcall 
+getPotentialMethodLeaks := function(call: Expression) : stack of string {
+	potentialLeaks: stack of string; 
+	
+	if(call.kind == ExpressionKind.METHODCALL) {
+		foreach(i: int; call.method_args[i]) {
+			visit(call.method_args[i], visitor{
+				before e: Expression -> {
+					if(e.kind == ExpressionKind.VARACCESS) {
+						push(potentialLeaks, e.variable);
+					}
+				}
+			});
+		}		
+	}
+	else if(call.kind == ExpressionKind.NEW) {
+		visit(call, visitor {
+			before e: Expression -> {
+				if(e.kind == ExpressionKind.VARACCESS) {
+					push(potentialLeaks, e.variable);
+				}
+			}
+		});
+	}
+	
+	return potentialLeaks; 
+};
+
+#gets all of the assignment expressions involving global variables 
+getGlobalAssignments := function(namespace: Namespace, class: Declaration, method: Method) : stack of Expression {
+	globalAssignments: stack of Expression; 
+	
+	potentialGlobalVars: stack of string; 
+	visit(method, visitor {
+		before e: Expression -> {
+			if(e.kind == ExpressionKind.ASSIGN) {
+				push(potentialGlobalVars, e.expressions[0].variable);		
+			}
+		}
+	});
+	
+	#eliminate nonGlobals 
+	
+	localVarEliminationStack: stack of string;
+	while(len(potentialGlobalVars) != 0) {
+		potentialLocalVar: string = pop(potentialGlobalVars);
+		#find if this variable is declared in this method 
+		isDeclaredInMethod: string = findVardeclInMethod(method, potentialLocalVar);
+		if(isDeclaredInMethod == "null") {
+			push(localVarEliminationStack, potentialLocalVar);
+		}
+	}
+
+	#eliminate any parameter variables 
+	parameterEliminationStack: stack of string; 
+	while(len(localVarEliminationStack) != 0) {
+		potentialParamVar: string = pop(localVarEliminationStack);
+		#find if this var is a parameter
+		isParamVar: string = findParam(method, potentialParamVar);
+		if(isParamVar == "null") {
+			push(parameterEliminationStack, potentialParamVar);
+		}
+	}
+
+	#try to match to a field
+	fieldMatchStack: stack of string;
+	while(len(parameterEliminationStack) != 0) {
+		potentialFieldVar: string = pop(parameterEliminationStack);
+		isNonPrimitiveField: string = findNonPrimitiveField(namespace, class, potentialFieldVar);
+		if(isNonPrimitiveField == "null") {
+			push(fieldMatchStack, potentialFieldVar);
+		}
+	}
+	
+	#to to match a superfield 
+	globalStack: stack of string; 
+	while(len(fieldMatchStack) != 0) {
+		potentialSuperFieldVar: string = pop(fieldMatchStack);
+		isNonPrimitiveSuperField: string = findNonPrimitiveSuperField(namespace, class, potentialSuperFieldVar);
+		if(isNonPrimitiveSuperField == "null") {
+			push(globalStack, potentialSuperFieldVar);
+		}
+	}
+	
+	#find the expressions involving these vars
+	while(len(globalStack) != 0) {
+		curGlobal: string = pop(globalStack);
+		
+		visit(method, visitor{
+			before e: Expression -> {
+				if(e.kind == ExpressionKind.ASSIGN) {
+					if(e.expressions[0].variable == curGlobal) {
+						push(globalAssignments, e);
+					}
+				}
+			}
+		});
+	}
+		
+	return globalAssignments; 	
+};
+
+#given a global assignment expressions, returns all the variables that might be leaking 
+getPotentialGlobalLeaks := function(curGlobal: Expression): stack of string {
+	potentialLeaks: stack of string; 
+	
+	visit(curGlobal.expressions[1], visitor{
+		before e: Expression -> {
+			if(e.kind == ExpressionKind.VARACCESS) {
+				push(potentialLeaks, e.variable);
+			}
+		}
+	});
+	
+	return potentialLeaks; 
+};
+
+
+#returns true if this class has any fields or superfields that can be leaked. 
+hasFields := function(namespace: Namespace, class: Declaration): bool {
+	hasFields: bool = false; 
+	
+	moreParents: bool = true; 
+	curClass: Declaration = class; 
+	dupeMap: map[string] of bool; 
+	while(moreParents) {
+		#see if this class has fields
+		if(len(class.fields) > 0) {
+			hasFields = true; 
+		}
+		if(hasFields) {
+			break; 
+		}
+		if(def(dupeMap[namespace.name + "." + curClass.name])) {
+			break; 
+		}
+		else{
+			dupeMap[namespace.name + "." + curClass.name];
+		}
+		if(def(parentDeclMap[namespace.name + "." + curClass.name])) {
+			parent: Declaration = parentDeclMap[namespace.name + "." + curClass.name];
+			curClass = parent; 
+		}
+		else {
+			moreParents = false; 
+		}
+	}	
+	
+	return hasFields;  
+};
+
+##########
+## Main ##
+##########
+getnumbugs := function(proj:Project) : int{
+    ret:int=0;
+    visit(proj,visitor{
+        before node: Revision ->{
+            if(match("\\bfix(s|es|ing|ed|up)?\\b", lowercase(node.log))
+            ||match("\\b(error|bug|issue)(s)?\\b",lowercase(node.log))
+            ||match("\\b(bug|issue|fix)(s)?\\b\\s*(#)?\\s*[0-9]+",lowercase(node.log))
+            ||match("\\b(bug|issue|fix)\\b\\s*id(s)?\\s*(=)?\\s*[0-9]+",lowercase(node.log)))
+            {
+                ret++;
+            }
+        }
+    });
+    return ret;
+};
+getnumclass := function(proj:Project) : int{
+	ret:int=0;
+	visit(proj,visitor{
+		before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+    		foreach (i: int; def(snapshot[i])) {
+    			visit(snapshot[i]);
+    		}
+    		stop;
+		}
+		before node:Declaration ->{
+			ret++;
+		}
+	});
+	return ret;
+};
+
+getnumstatement := function(proj:Project) : int{
+	ret:int=0;
+	visit(proj,visitor{
+		before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+    		foreach (i: int; def(snapshot[i])) {
+    			visit(snapshot[i]);
+    		}
+    		stop;
+		}
+		before node:Statement ->{
+			ret++;
+		}
+	});
+	return ret;
+};
+getnumcommit := function(proj:Project) : int{
+	ret:int=0;
+	visit(proj,visitor{
+		before node: CodeRepository -> {
+			ret=len(node.revisions);
+		}
+	});
+	return ret;
+};
+
+numberofclass:int=getnumclass(p);
+numberofstatement:int=getnumstatement(p);
+numberofcommit:int=getnumcommit(p);
+numberofbug:int=getnumbugs(p);
+
+mapstring: map[string] of int;
+leakmap: map[string] of int;
+
+ptype := function() : string{
+	ret:int=numberofclass;
+	strstring:string="";
+	if(ret<6)
+	    strstring= "6";
+	else if(ret<12)
+	    strstring= "12";
+	else if(ret<25)
+	    strstring= "25";
+	else if(ret<50)
+	    strstring= "50";
+	else if(ret<100)
+	    strstring= "100";
+	else
+	    strstring= "1000";
+	return strstring;
+	
+};
+
+ptyperevision := function() : string{
+	ret:int=numberofcommit;
+	strstring:string="";
+	if(ret<6)
+	    strstring= "6";
+	else if(ret<12)
+	    strstring= "12";
+	else if(ret<25)
+	    strstring= "25";
+	else if(ret<50)
+	    strstring= "50";
+	else if(ret<100)
+	    strstring= "100";
+	else
+	    strstring= "1000";
+	return strstring;
+	
+};
+
+visit(p,visitor{
+    before node: Revision ->{
+        if(match("\\bfix(s|es|ing|ed|up)?\\b", lowercase(node.log))
+        ||match("\\b(error|bug|issue)(s)?\\b",lowercase(node.log))
+        ||match("\\b(bug|issue|fix)(s)?\\b\\s*(#)?\\s*[0-9]+",lowercase(node.log))
+        ||match("\\b(bug|issue|fix)\\b\\s*id(s)?\\s*(=)?\\s*[0-9]+",lowercase(node.log)))
+        {
+            #counts["total"] <<1;
+            foreach(i:int; def(node.files[i]))
+                if(match("\\.java$", node.files[i].name)){
+                    filesname:string =p.project_url+" : "+node.files[i].name;
+                    if(!haskey(mapstring,filesname)){
+                        mapstring[filesname]=0;
+                    }
+                    if(haskey(mapstring,filesname)){
+                        mapstring[filesname]= mapstring[filesname]+1;
+                    }
+                    #counts[p.project_url+" : "+node.files[i].name]<<1;
+                }
+            #logs[format("%s",node.commit_date)] << node.log;
+        }
+    }
+});
+
+exists(m: int; match("^java", lowercase(p.programming_languages[m]))) {
+	counts["numProjects"] << 1;
+	buildParentMap(p);
+	
+
+	
+	visit(p, visitor {
+		# only look at the latest snapshot
+		before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+	    	foreach (i: int; def(snapshot[i])) {
+	    		visit(snapshot[i]);
+	    	}
+	    	stop;
+		}
+		
+		before namespace: Namespace -> {
+			#visit each class
+			foreach(i: int; namespace.declarations[i]) {
+				class: Declaration = namespace.declarations[i];
+				leakingClass: bool = false; 
+				numLeaks: int = 0;
+				#Common variables are declared here to avoid compile error - be careful
+				method: Method; 
+				leakFound: bool;
+				leakFoundViaAlias: bool;
+				methodAliasDupeMap: map[string] of bool; 
+				methodLeakDupeMap: map[string] of bool; 
+				
+				if(!hasFields(namespace, class)) {
+					counts["no fields skipped"] << 1;
+					counts["nonLeakingClasses"] << 1;
+					continue;
+				}
+				
+				#Pass 1: Returns
+				foreach(j: int; class.methods[j]) {
+					clear(methodLeakDupeMap);
+					method = class.methods[j];
+					#collect an array of each return statement 
+					statements: stack of Statement; 
+					statements = getReturnStatements(method);
+					
+					#go over each statement 
+					while(len(statements) != 0) {
+						curStatement: Statement = pop(statements);
+						
+						#get the variables involved 
+						potentialLeaksP1: stack of string = getPotentialReturnLeaks(curStatement);
+						usedLeakP1: stack of string; 
+						while(len(potentialLeaksP1) != 0) {
+							curLeakP1: string = pop(potentialLeaksP1);
+							
+							if(def(methodLeakDupeMap[curLeakP1])) {
+								continue; 
+							}
+							else {
+								methodLeakDupeMap[curLeakP1] = true; 
+								push(usedLeakP1, curLeakP1);
+							}							
+						}
+						leakFound = false; 
+						leakFound = searchForLeaks(namespace, class, method, usedLeakP1);
+						if(leakFound) {
+							numLeaks = numLeaks+1;
+							#leakingClass = true; 
+						}
+					}
+				}
+				
+				#Pass 2: Method Parameters 
+				if(!leakingClass) {
+					foreach(j: int; class.methods[j]) {
+						clear(methodLeakDupeMap);
+						method = class.methods[j];
+						
+						methodCalls: stack of Expression; 
+						methodCalls = getMethodCalls(method);
+						
+						while(len(methodCalls) != 0) {
+							curCall: Expression = pop(methodCalls);
+							
+							#get the variables involved
+							potentialLeaksP2: stack of string = getPotentialMethodLeaks(curCall);
+							usedLeakP2: stack of string; 
+							while(len(potentialLeaksP2) != 0) {
+								curLeakP2: string = pop(potentialLeaksP2);
+								
+								if(def(methodLeakDupeMap[curLeakP2])) {
+									continue; 
+								}
+								else {
+									methodLeakDupeMap[curLeakP2] = true; 
+									push(usedLeakP2, curLeakP2);
+								}							
+							}
+							leakFound = false; 
+							leakFound = searchForLeaks(namespace, class, method, usedLeakP2);
+							if(leakFound) {
+							    numLeaks = numLeaks+1;
+								#leakingClass = true; 
+							}
+						}
+					}	
+				}
+				
+				#Pass 3: Globals 
+				if(!leakingClass) {
+					foreach(j: int; class.methods[j]) {
+						method = class.methods[j];
+						clear(methodLeakDupeMap);
+						globalAssignments: stack of Expression; 
+						globalAssignments = getGlobalAssignments(namespace, class, method);
+						
+						while(len(globalAssignments) != 0) {
+							curGlobal: Expression = pop(globalAssignments);
+							
+							#get the variables involved
+							potentialLeaksP3: stack of string = getPotentialGlobalLeaks(curGlobal);
+							usedLeakP3: stack of string; 
+							while(len(potentialLeaksP3) != 0) {
+								curLeakP3: string = pop(potentialLeaksP3);
+								
+								if(def(methodLeakDupeMap[curLeakP3])) {
+									continue; 
+								}
+								else {
+									methodLeakDupeMap[curLeakP3] = true; 
+									push(usedLeakP3, curLeakP3);
+								}							
+							}
+							leakFound = false; 
+							leakFound = searchForLeaks(namespace, class, method, usedLeakP3);
+							if(leakFound) {
+								numLeaks = numLeaks+1;
+								#leakingClass = true; 
+							}
+						}
+					}
+				}
+	
+				#Pass 4: Return Alias
+				if(!leakingClass) {
+
+					foreach(j: int; class.methods[j]) {
+						clear(methodAliasDupeMap);
+						method = class.methods[j];
+						#collect an array of each return statement 
+						statementsAlias: stack of Statement; 
+						statementsAlias = getReturnStatements(method);
+						
+						#go over each statement 
+						while(len(statementsAlias) != 0) {
+							curStatementAlias: Statement = pop(statementsAlias);
+							potentialLeakP4: stack of string = getPotentialReturnLeaks(curStatementAlias);
+							usedAliasP4: stack of string; 
+							while(len(potentialLeakP4) != 0) {
+								curAliasP4: string = pop(potentialLeakP4);
+								if(def(methodAliasDupeMap[curAliasP4])) {
+									continue; 
+								}
+								else {
+									methodAliasDupeMap[curAliasP4] = true; 
+									push(usedAliasP4, curAliasP4);
+								}
+							}
+							leakFoundViaAlias = false; 
+							leakFoundViaAlias = searchForAliasLeaks(namespace, class, method, usedAliasP4);
+							if(leakFoundViaAlias) {
+								numLeaks = numLeaks+1;
+								#leakingClass = true; 
+							}
+						}		
+					}
+				}
+
+				#Pass 5: Global Alias
+				if(!leakingClass) {
+					foreach(j: int; class.methods[j]) {
+						clear(methodAliasDupeMap);
+						method = class.methods[j];
+						
+						globalAssignmentsAlias: stack of Expression; 
+						globalAssignmentsAlias = getGlobalAssignments(namespace, class, method);
+						
+						
+						while(len(globalAssignmentsAlias) != 0) {
+							curGlobalAlias: Expression = pop(globalAssignmentsAlias);
+							potentialLeakP5: stack of string = getPotentialGlobalLeaks(curGlobalAlias);
+							usedAliasP5: stack of string; 
+							while(len(potentialLeakP5) != 0) {
+								curAliasP5: string = pop(potentialLeakP5);
+								if(def(methodAliasDupeMap[curAliasP5])) {
+									continue; 
+								}
+								else {
+									methodAliasDupeMap[curAliasP5] = true; 
+									push(usedAliasP5, curAliasP5);
+								}
+							}
+							leakFoundViaAlias = false;
+							leakFoundViaAlias = searchForAliasLeaks(namespace, class, method, usedAliasP5);
+							if(leakFoundViaAlias) {
+								numLeaks = numLeaks+1;
+								#leakingClass = true; 
+							}
+						}
+					}
+				}
+
+				#Pass 6: Method Alias
+				if(!leakingClass) { 
+					foreach(j: int; class.methods[j]) {
+						clear(methodAliasDupeMap);
+						method = class.methods[j];
+						
+						methodCallsAlias: stack of Expression; 
+						methodCallsAlias = getMethodCalls(method);
+						
+						while(len(methodCallsAlias) != 0) {
+							curCallAlias: Expression = pop(methodCallsAlias);
+							potentialLeaksP6: stack of string = getPotentialMethodLeaks(curCallAlias);
+							usedAliasP6: stack of string; 
+							while(len(potentialLeaksP6) != 0) {
+								curAliasP6: string = pop(potentialLeaksP6);
+								if(def(methodAliasDupeMap[curAliasP6])) {
+									continue; 
+								}
+								else {
+									methodAliasDupeMap[curAliasP6] = true; 
+									push(usedAliasP6, curAliasP6);
+								}
+							}
+							leakFoundViaAlias = false; 
+							leakFoundViaAlias = searchForAliasLeaks(namespace, class, method, usedAliasP6);
+							if(leakFoundViaAlias) {
+								numLeaks = numLeaks+1;
+								#leakingClass = true; 
+							}
+						}
+					}	
+				}
+				
+				    			bugnumber:map[string] of int;
+    			newstr:string=strreplace(namespace.name,".","/",true)+ "/" + class.name;
+    			arrofkeys: array of string;
+    			arrofkeys = keys(mapstring);
+    			foreach(integer:int;def(arrofkeys[integer])){
+    			    #logss["int"]<<len(arrofkeys);
+    			 #   logss[arrofkeys[i]]<<mapstring[arrofkeys[i]];
+    			    k:string= arrofkeys[integer];
+    			    if(match(newstr+"\\.",k)){
+    			        #counts["hahaha"] << 1;
+    			        bugnumber[newstr]=mapstring[k];
+    			        #counts1[p.project_url + " : " + newstr][mapstring[k]] << numLeaks;
+    			    }
+    			}
+    			#if(numberofclass>=10&&numberofstatement>=1000&&numberofcommit>50&&numberofbug>1){
+        			if(def(bugnumber[newstr]))
+    			        counts1[" "+ptype()+" "][p.project_url + " : " + newstr][format(" %d ",bugnumber[newstr])] << numLeaks; 
+    			    else
+    			        counts1[" "+ptype()+" "][p.project_url + " : " + newstr][format(" %d ",0)] << numLeaks;
+				#Counting if this class leaks or not. 
+				#if(leakingClass) {
+				#	counts["leakingClasses"] << 1;
+				#}
+				#else {
+				#	counts["nonLeakingClasses"] << 1;
+				#}
+			}
+		}
+	});
+}

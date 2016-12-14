@@ -1,0 +1,19 @@
+p: Project = input;
+logs: output collection[string] of string;
+counts: output sum of int;
+
+visit(p,visitor{
+    before node: Project ->
+            if(node.project_url != "https://github.com/localwiki/localwiki")
+                stop;
+    before node: Revision ->{
+        if(match("\\bfix(s|es|ing|ed|up)?\\b", lowercase(node.log))
+        ||match("\\b(error|bug|issue)(s)?\\b",lowercase(node.log))
+        ||match("\\b(bug|issue|fix)(s)?\\b\\s*(#)?\\s*[0-9]+",lowercase(node.log))
+        ||match("\\b(bug|issue|fix)\\b\\s*id(s)?\\s*(=)?\\s*[0-9]+",lowercase(node.log)))
+        {
+            counts <<1;
+            logs[format("%s",node.commit_date)] << node.log;
+        }
+    }
+});

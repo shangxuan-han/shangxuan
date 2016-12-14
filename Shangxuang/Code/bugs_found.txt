@@ -1,0 +1,158 @@
+The first bug of the function "isThisExpr"
+The original code is :
+
+
+isThisExpr := function(vname: string) : bool {
+    if (strfind(".", vname) != -1) {
+        parts := splitall(vname, "\\.");
+        if (parts[len(parts) - 1] == "this") {
+            # found vname that has .this, check in the fields of the class
+            vminusthis := "";
+            
+            for( i:=1 ; i < len(parts) - 1 ; i++)
+                vminusthis = format("%s%s", vminusthis, parts[i]);
+                
+            if (!haskey(fields, vminusthis)) {
+                #logs << vname;
+                return true;
+            }
+        }
+    }    
+    return false;
+};
+
+Problems:
+The aim of this function is to find out the variable like "this.x".
+However, it is looking for "x.this". it is inversed. And vminusthis 
+should be seperated by "."
+
+correct version:
+
+isThisExpr := function(vname: string) : bool {
+    if (strfind(".", vname) != -1) {
+        parts := splitall(vname, "\\.");
+        if (parts[0] == "this") {
+            # found vname that has this. , check in the fields of the class
+            vminusthis := "";
+            if(len(parts)>1)
+				vminusthis = format("%s", parts[1]);
+            for( i:=2 ; i < len(parts) - 1 ; i++)
+                vminusthis = format("%s.%s", vminusthis, parts[i]);
+                
+            if (!haskey(fields, vminusthis)) {
+                #logs << vname;
+                return true;
+            }
+        }
+    }    
+    return false;
+};
+
+The second bug:
+original code:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            vname = subexpr.variable;
+            stop;
+        }
+    }
+});
+
+correct version:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            if(len(subexpr.expressions) > 0){
+                vname = subexpr.variable;
+                #logs << "there exist1";
+                visit(subexpr.expressions[0]);
+            }
+            else{
+                vname = subexpr.variable;
+                stop;
+            }
+        }
+    }
+});
+
+original code:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            operand = subexpr.variable;
+            stop;
+        }
+    }
+});
+
+correct version:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            if(len(subexpr.expressions) > 0){
+                operand = subexpr.variable;
+                #logs << "there exist1";
+                visit(subexpr.expressions[0]);
+            }
+            else{
+                operand = subexpr.variable;
+                stop;
+            }
+        }
+    }
+});
+
+original code:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            rcv = subexpr.variable;
+            stop;
+        }
+    }
+});
+
+correct version:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            if(len(subexpr.expressions) > 0){
+                rcv = subexpr.variable;
+                #logs << "there exist1";
+                visit(subexpr.expressions[0]);
+            }
+            else{
+                rcv = subexpr.variable;
+                stop;
+            }
+        }
+    }
+});
+
+original code:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            lhs = subexpr.variable;
+            stop;
+        }
+    }
+});
+
+correct version:
+visit(expr.expressions[0], visitor {
+    before subexpr: Expression -> {
+        if (subexpr.kind == ExpressionKind.VARACCESS) {
+            if(len(subexpr.expressions) > 0){
+                lhs = subexpr.variable;
+                #logs << "there exist1";
+                visit(subexpr.expressions[0]);
+            }
+            else{
+                lhs = subexpr.variable;
+                stop;
+            }
+        }
+    }
+});

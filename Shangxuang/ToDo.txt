@@ -1,0 +1,7 @@
+1. do thematic analysis on bug query.
+
+2. new test on correlation between leaks and bugs.
+
+3. do the analysis on project basis.
+
+4. Change the classification of ANOVA test.

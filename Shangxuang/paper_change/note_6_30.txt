@@ -1,0 +1,5 @@
+1. Section 6.1: Where us the base number 2003 coms from?
+2. In the definition of U3, the static fields are not checked in the query
+3. Section 6.5 Akka: For using U1 and U3, there are most 62. For using U2 and U3 there
+	are 35. should them be inverse? becuase U1 is smaller than U2
+4. The same problem with the Java part.

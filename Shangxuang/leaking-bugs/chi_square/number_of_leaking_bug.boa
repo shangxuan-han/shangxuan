@@ -1,0 +1,1381 @@
+##################
+# Logging Levels #
+##################
+
+reportFailedMatches: bool = false; 
+reportLeakedFields: bool = false; 
+invalidVariableLogging: bool = false; 
+curNumLogs: int = 0; 
+totalNumLogs: int = 0; 
+
+######################
+# Output Aggregators #
+######################
+logging: output collection[string] of string; 
+logss: output collection[string] of int;
+counts: output sum[string] of int; 
+counts1: output sum[string][string] of int; 
+logSet: output set[string] of string; 
+
+#############
+# Constants #
+#############
+#array of all the primitive types 
+primitives: array of string = {"byte", "short", "int", "long", "float", "double", "boolean", "char", "String"};
+p: Project = input; 
+
+##
+# Globals 
+##
+
+fullParentage: map[string] of string; 
+
+############################
+# Visitor Global Variables #
+############################
+
+#used by the getExpressionVars visitor 
+expressionVars: string; 
+#used by the getReturnVars visitor 
+returnVars: string; 
+#used by the getMethodInvocation visitor 
+methodVars: string; 
+#used by the getMethodInvocation visitor to only get args to methods that aren't in methodMap
+methodMap: map[string] of bool;
+#used by the aliasVisitor 
+aliasMap: map[string] of string; 
+#used by the getGlobals visitor 
+globalString: string; 
+#used by the assignedToGlobal visitor and function 
+curGlobalVarMap: map[string] of bool; 
+
+
+
+#Given a string representation of a variable type, this function will return true if that type is a primitive type
+#primitive types are defined in the "primitives" global variable. 
+isPrimitive := function(s: string) : bool {
+    foreach(i: int; primitives[i]) {
+        if(match("^" + primitives[i] + "$", s)) {
+            return true;    
+        }
+    }
+    return false; 
+};
+
+
+#####################
+# General Functions #
+#####################
+
+#escapes any speical regex characters in string s
+escapeRegex := function(s: string) : string {
+    escaped: string = s; 
+    
+    escaped = strreplace(escaped, ".", "\\.", true);
+    escaped = strreplace(escaped, "[", "\\[", true);
+    escaped = strreplace(escaped, "]", "\\]", true);
+    escaped = strreplace(escaped, "$", "\\$", true);
+    
+    return escaped; 
+};
+
+#buildString is used to build up the pseudo-arrays that this query uses. stringArray is the 'array' so far, element
+#is the next element of the 'array' to be added. 
+buildString := function(stringArray: string, element: string) : string {
+	s: string = "";
+	#The standard cases
+	if(def(stringArray) && def(element)) {
+		if(len(element) == 0 && len(stringArray) > 0) {
+			return stringArray;
+		}
+		else if(len(element) > 0 && len(stringArray) > 0) {
+			
+			if(match("#" + element + "#", stringArray)) {
+				return stringArray; 
+			}
+			return stringArray + "#" + element;
+		}
+		else if(len(element) > 0 && len(stringArray) == 0) {
+			return element; 
+		}
+	}
+	#the error cases
+	else if(def(stringArray) && !def(element)) {
+		return stringArray;
+	}
+	else if(!def(stringArray) && def(element)) {
+		return element; 
+	}
+	else {
+		return "";
+	}
+	return s; 
+};
+
+#given a varsString of the form "varName:varType|varName:varType|...", will search through the string to find where
+#varName occurs, and then extracts the type for that variable. Get type is used when one already knows that varName 
+#occurs in the varString. 
+getType := function(varsString: string, varName: string): string {
+	typeName: string = "";
+	if(len(varsString) == 0) {
+	    return "";
+	}
+	varsStringArray: array of string = splitall(varsString, "#");
+	foreach(i: int; varsStringArray[i]) {
+		#curVar looks like "varName:varType|"
+		curVar: string = "";
+		if(def(varsStringArray[i])) {
+            curVar = varsStringArray[i];   
+		}
+		if(match(varName, curVar) && len(curVar) > 0) {
+			varArray: array of string = {""};
+			varArray = splitall(curVar, ":");
+		    typeName = varArray[1];
+		}
+		typeName = strreplace(typeName, ":", "", true);
+	}
+	varsStringArray = {""};
+	return typeName; 
+};
+
+##################
+## Finding Vars ##
+##################
+
+#given a method, this function will extract the names of types of every parameter that this method requires
+#example: methodA(String s, int count) {}; will return "s:String|count:int"
+getMethodParams := function(method: Method): string {
+	methodParamString: string = "";
+	
+	foreach(i: int; method.arguments[i]) {
+		arg: Variable = method.arguments[i];
+		argName: string = escapeRegex(arg.name); 
+		argType: string = escapeRegex(arg.variable_type.name); 
+		
+		methodParamString = buildString(methodParamString, argName + ":" + argType);
+	}
+	
+	return methodParamString; 
+};
+
+#This visitor is to be used to visit statements of a method. It requires the global variable "expressionVars".
+#If it is used to visit a statement is will return any variables that are declared within that statement. 
+#used to get all the variable declarations within a method 
+getExpressionVars := visitor {
+	before expression: Expression -> {
+		if(expression.kind == ExpressionKind.VARDECL) {
+			foreach(i: int; expression.variable_decls[i]) {
+				var: Variable = expression.variable_decls[i];
+				varName: string = escapeRegex(var.name); 
+				varType: string = escapeRegex(var.variable_type.name); 
+				expressionVars = buildString(expressionVars, varName + ":" + varType);	
+			}
+		}
+	}
+};
+
+#This visitor should be run on statements of kind "Return". Before running on a return statement clear the 
+#returnVars string. Requires the returnVars global variable to function 
+getReturnVars := visitor {
+	before expression: Expression -> {
+		if(expression.kind == ExpressionKind.VARACCESS) {
+	        returnVars = buildString(returnVars, escapeRegex(expression.variable));
+		}
+	}
+};
+
+#This visitor should be run on a statement. If the statement or any of its substatements contains a methodcall,
+#this visitor will add each argument to the methodVars global variable. 
+getMethodInvocation := visitor {
+	before expression: Expression -> {
+		if(expression.kind == ExpressionKind.METHODCALL) {
+		    #only look at methods that aren't in methodmap 
+		    if(!def(methodMap[expression.method])) {
+    			foreach(i: int; expression.method_args[i]) {
+    				arg: Expression = expression.method_args[i];
+    				returnVars = "";
+    				visit(arg, getReturnVars);
+    				methodVars = buildString(methodVars, returnVars);
+    			}
+		    }
+		}
+		#checks for "new" expression.
+		else if(expression.kind == ExpressionKind.NEW) {
+			returnVars = "";
+			visit(expression, getReturnVars);
+			methodVars = buildString(methodVars, returnVars);
+		}
+	}
+};
+
+#this visitor uses the methodVars global variable for operation. It will look for arguments to methods whose names have
+#been placed in the methodMap global variable. In practice, this is used to only look at methods defined in this class 
+#who we have already determined to leak
+getSelfMethodInvocation := visitor {
+	before expression: Expression -> {
+		if(expression.kind == ExpressionKind.METHODCALL) { 
+		    if(def(methodMap[expression.method])) {
+    			foreach(i: int; expression.method_args[i]) {
+    				arg: Expression = expression.method_args[i];
+    				methodVars = buildString(methodVars, escapeRegex(arg.variable));
+    			}
+		    }
+		}
+	}	
+};
+
+#given a method, returns a list of all the variables declared in that method, and their types 
+getMethodVarDecls := function(method: Method) : string {
+	#Get a string that has a full list of every variable declared in this method 
+	methodVarDecls: string = "";
+	statementStack: stack of Statement; 
+	curStatement: Statement; 
+	foreach(k: int; method.statements[k]) { 
+		#add every method to the stack
+		push(statementStack, method.statements[k]);
+	}
+	while(len(statementStack) > 0) {
+		curStatement = pop(statementStack);
+		#if this statement has sub-statements, add them to the stack 
+		foreach(l: int; curStatement.statements[l]) {
+			push(statementStack, curStatement.statements[l]);
+		}
+		#look for vardecls in this statement  
+		if(def(curStatement.expression)) {
+			#clear the expressionVars global variable, which the 
+			#getExpressionVars visitor will visit.  
+			expressionVars = "";
+			visit(curStatement, getExpressionVars);
+			methodVarDecls = buildString(methodVarDecls, expressionVars);
+			expressionVars = "";
+		}
+	}
+	return methodVarDecls; 
+};
+
+#This is a simple function that pulls the list of fields and superfields from the fullFieldMap variable. 
+getClassVarString := function(namespace: Namespace, class: Declaration, fullFieldMap: map[string] of string): string {
+	classVarString: string = "";
+	if(def(fullFieldMap[namespace.name + "." + class.name])) {
+	    classVarString = fullFieldMap[namespace.name + "." + class.name];
+	}
+	return classVarString; 
+};
+
+#this visitor uses the aliasMap global variable to function. It looks for ASSIGN or VARDECL expressions and adds them
+#the map of aliases. For simplicity this visitor builds the aliasMap as a map from original to a list of aliases. 
+#this is reversed before use. 
+aliasVisitor := visitor {
+	before e: Expression -> {
+		alias: string; 
+		originalVars: string; 
+		original: array of string; 
+		originalVarName: string; 
+		oldAliasList: string; 
+		
+		if(e.kind == ExpressionKind.ASSIGN) {
+			alias = e.expressions[0].variable;
+			returnVars = "";
+			visit(e.expressions[1], getReturnVars);
+			originalVars = returnVars;
+			returnVars = ""; 
+			if(len(originalVars) > 0) {
+				original = splitall(originalVars, "#");
+				originalVars = "";
+				foreach(j: int; original[j]) {
+					originalVarName = original[j];
+					if(def(aliasMap[alias])) {
+						oldAliasList = aliasMap[alias];	
+					}
+					else {
+						oldAliasList = "";
+					}
+					aliasMap[alias] = buildString(oldAliasList, originalVarName);
+				}
+			}
+			original = {""};
+			oldAliasList = "";
+			originalVars = "";
+			originalVarName = "";
+		}
+		else if(e.kind == ExpressionKind.VARDECL) {
+			foreach(i:int; e.variable_decls[i]) {
+				alias = e.variable_decls[i].name;
+				returnVars = "";
+				visit(e.variable_decls[i].initializer, getReturnVars);
+				originalVars = returnVars; 
+				returnVars = "";
+				
+				original = splitall(originalVars, "#");
+				originalVars = "";
+				foreach(j:int; original[j]) {
+					originalVarName = original[j];
+					#Literal vardecls give blank originalVarNames
+					if(match("^$", originalVarName)) {
+						continue;
+					}
+					if(def(aliasMap[alias])) {
+						oldAliasList = aliasMap[alias];	
+					}
+					else {
+						oldAliasList = "";
+					}
+					aliasMap[alias] = buildString(oldAliasList, originalVarName);
+				}
+				originalVarName = "";
+				oldAliasList = "";
+			}
+		}
+	}
+};
+
+#This visitor will mark all of the parameters of a methodcall as being aliases of each other. 
+aliasViaMethodVisitor := visitor {
+	before e: Expression -> { 
+		argumentVars: string; 
+		curVar: string; 
+		arg: string; 
+		oldAliasList: string;
+		arguments: array of string; 
+		#for methodcalls, all are assumed to be aliased together 
+		if(e.kind == ExpressionKind.METHODCALL) {
+			argumentVars = "";
+			foreach(i: int; e.method_args[i]) {
+				returnVars = "";
+				visit(e.method_args[i], getReturnVars); 
+				argumentVars = buildString(argumentVars, returnVars);
+			}
+			returnVars = "";
+			arguments = splitall(argumentVars, "#");
+			argumentVars = "";
+
+			foreach(i: int; arguments[i]) {
+				curVar = arguments[i];
+				foreach(j: int; arguments[j]) {
+					if(!match("^" + curVar + "$", arguments[j])) {
+						oldAliasList = "";
+						arg = arguments[j];
+						if(def(aliasMap[arg])) {
+							oldAliasList = aliasMap[arg];
+						}
+						aliasMap[arg] = buildString(oldAliasList, curVar);							
+					}
+				}	
+			}
+			arguments = {""};
+			oldAliasList = "";
+			curVar = "";
+
+		}
+		else if(e.kind == ExpressionKind.NEW) {
+			argumentVars = "";
+			foreach(i: int; e.expressions[i]) {
+				returnVars = "";
+				visit(e.expressions[i], getReturnVars);
+				argumentVars = buildString(argumentVars, returnVars);
+			}
+			arguments = splitall(argumentVars, "#");
+			argumentVars = "";
+
+			foreach(i: int; arguments[i]) {
+				curVar = arguments[i];
+				foreach(j: int; arguments[j]) {
+					if(!match("^" + curVar + "$", arguments[j])) {
+						arg = arguments[j];
+						oldAliasList = "";
+						if(def(aliasMap[arg])) {
+							oldAliasList = aliasMap[arg];
+						}
+						aliasMap[arg] = buildString(oldAliasList, curVar);
+					}
+				}	
+			}
+			arguments = {""};
+			oldAliasList = "";
+			curVar = "";
+			arg = "";
+						
+		}
+	}
+};
+
+#####################
+#  Finding methods  #
+#####################
+
+#given a class, returns an array of strings containing the names of all of the methods from that class
+getMethodsFromClass := function(class: Declaration): map[string] of bool {
+	methodsFromClass: map[string] of bool;
+	
+	foreach(i: int; class.methods[i]) {
+		methodName: string = class.methods[i].name;
+		methodsFromClass[methodName] = false; 
+	}
+	
+	return methodsFromClass; 
+};
+
+###########################################
+## Finding Parent Classes & Their Fields ##
+###########################################
+
+#takes a project as input and returns a map[string] of string, where
+#the keys are the classes in the project and the values are the superclasses of the keys
+#if a class has no superclass than the value will be the string "NULL"
+findParentClasses := function(p: Project): map[string] of string {
+    parents: map[string] of string; 
+    visit(p, visitor {
+        # only look at the latest snapshot
+    	before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+        	foreach (i: int; def(snapshot[i])) {
+        		visit(snapshot[i]);
+        	}
+        	stop;
+    	}
+    	
+        before node: Namespace -> {
+            foreach(i: int; node.declarations[i]) {
+                declaration: Declaration = node.declarations[i];
+                #format the name of this class including the package 
+                fullClassName: string = node.name + "." + declaration.name;
+                #if it is a class look to see if it extends another class 
+                if(declaration.kind == TypeKind.CLASS) {
+                    foreach(j: int; declaration.parents[j]) {
+                        #if it extends another class, add that class as a parent
+                        if(declaration.parents[j].kind == TypeKind.CLASS) {
+                            #format the parent's full classname including the package 
+                            parentFullClassName: string = node.name + "." + declaration.parents[j].name;
+                            parents[fullClassName] = parentFullClassName;
+                        }
+                    }
+                    #if, after looking at all parents, none of them are a class, we say parent is null
+                    if(!haskey(parents, fullClassName)) {
+                        parents[fullClassName] = "NULL";
+                    }
+                }
+            }    
+        }
+    });  
+    
+    return parents; 
+};
+
+#will find the total parentage for every class. The input is a map[string] of string where the keys are 
+#classes and the values are their superclasses. Returns a map[string] of string. 
+#Example: Class A extends Class B, and Class B extends Class C.
+#   Input: <Class A, Class B>, <Class B, Class C>, <Class C, NULL>.
+#   Output: <Class A, "Class A:Class B:Class C">,
+#           <Class B, "Class B:Class C">,
+#           <Class C, "Class C">
+computeAllSuperclasses := function(parents: map[string] of string): map[string] of string {
+    classes: array of string = keys(parents);
+    out: map[string] of string; 
+    #iterate over every class
+    foreach(i: int; def(classes[i])) {
+        className: string = classes[i];
+        #map of parents. the key is how high in the parentage tree the class is
+        parentMap: map[int] of string; 
+        duplicateMap: map[string] of int; 
+        numParents: int = 0; 
+        currentClass: string = className;
+        #loop until we run out of parents
+        while(true) {
+            #we have found a parent defined in the project that isn't null
+            if(def(parents[currentClass]) && !match("^NULL$", parents[currentClass])) {
+                #add it to the parentMap and set the parent as the class we are considering 
+                parentMap[numParents] = parents[currentClass];
+                currentClass = parents[currentClass];
+                numParents++;
+                #if have hit this class before than stop
+                if(def(duplicateMap[currentClass])) {
+                    break;
+                }
+                duplicateMap[currentClass] = 1; 
+            }
+            #no more parents, exit the loop
+            else {
+                break;
+            }
+        }
+        #build our string of parents 
+        parentString: string = className;
+        #add each parent to the string one by one. 
+        j: int = 0;
+        while(j < len(parentMap)){
+            parentString = parentString + " " + parentMap[j];
+            j++;
+        }
+        #add this parentage string to the output map
+		out[className] = parentString; 
+    }
+    return out; 
+};
+
+#This function add the var names and types of the fields in the given class to fieldMap 
+findFields := function(class: Declaration, packageName: string, fieldMap: map[string] of string): map[string] of string {
+    fieldString: string = "";
+    foreach(i: int; class.fields[i]) {
+    	var: Variable = class.fields[i];
+        varName: string = escapeRegex(class.fields[i].name);
+        varType: string = escapeRegex(class.fields[i].variable_type.name);
+        fieldString = buildString(fieldString, varName + ":" + varType);
+    }
+    fieldMap[packageName + "." + class.name] = fieldString; 
+    return fieldMap; 
+};
+
+#This function will get the fields of every class in the project and return them as a map where the key is the
+#name of the class. Only gets fields of the class (not of any of its superclasses)
+getFields := function(p: Project) : map[string] of string {
+    fieldMap: map[string] of string;
+    
+    visit(p, visitor {
+	    # only look at the latest snapshot
+    	before node: CodeRepository -> {
+		snapshot := getsnapshot(node);
+        	foreach (i: int; def(snapshot[i])) {
+        		visit(snapshot[i]);
+        	}
+        	stop;
+    	}
+    	
+    	before node: Namespace -> {
+    	    foreach(i: int; node.declarations[i]) {
+    	        fieldMap = findFields(node.declarations[i], node.name, fieldMap);    
+    	    }
+    	}
+    });
+    
+    return fieldMap;
+};
+
+#This function will take a fieldMap which contains the fields of every class in the project, as well as 
+#a map containing the full inheritance of every class in this project. Using these it returns a map 
+#where the key is the name of a class and the value is a list of all the fields in that class and 
+#all of its superclasses 
+getFullFieldMap := function(fieldMap: map[string] of string, parentage: map[string] of string): map[string] of string {
+    fullFieldMap: map[string] of string; 
+    #put fields of parent classes into the fieldMap for child classes
+    classes: array of string = keys(fieldMap);
+    foreach(i: int; classes[i]) {
+        class: string = classes[i];
+        parentString: string = "";
+        if(def(parentage[class])) {
+        	parentString = parentage[class];        	
+        }
+        fullFieldList: string = "";
+        #break parentString into each class 
+        parentArray: array of string = splitall(parentString, " ");
+        foreach(j: int; parentArray[j]) {
+            parent: string = parentArray[j];
+            #remove the colons use to delimit differnt parents
+            parent = strreplace(parent, ":", "", true);    
+            #get the fields for this parent 
+            fields: string = "";
+            if(def(fieldMap[parent])) {
+            	fields = fieldMap[parent]; 
+            } 
+            if(len(fullFieldList) > 0) {
+                fullFieldList = fullFieldList + "#" + fields; 
+            }
+            else {
+                fullFieldList = fields;     
+            }
+        }
+        fullFieldMap[class] = fullFieldList;  
+    }
+    return fullFieldMap; 
+};
+
+
+##########################
+# Shangxuang's Functions #
+##########################
+### This function return if arg1 is subtype of arg2 or opposite. return "" if no such type in the project or return "no relationship".
+
+## Attention: This function can only detect the user defined classes, which means that it cannot find the inherited classes from in library.
+#counts: output sum[string] of int;
+interface: output collection[string] of string;
+logs: output collection of string;
+#num: output sum of int;
+#hier: map[string] of string;
+#st: stack of string;
+name := "";
+str :="";
+ele :="";
+check : set of string;
+answer := false;
+#out: output collection of string;
+nosub1 :=false;
+nosub2 :=false;
+
+numChecks: int = 0; 
+totalChecks: int = 10; 
+
+standard := function(type1: string) : string {
+    ret:=type1;
+    if(type1=="Integer")
+        ret="int";
+    if(type1=="Double")
+        ret="double";
+    if(type1=="Character")
+        ret="char";
+    if(type1=="string")
+        ret="String";
+    if(type1=="Boolean")
+        ret="boolean";
+    if(type1=="Byte")
+        ret="byte";
+    if(type1=="Short")
+        ret="short";
+    if(type1=="Long")
+        ret="long";
+    if(type1=="Float")
+        ret="float";
+    return ret;
+};
+compareTo := function(type11: string, type22: string, node: Project) : string {
+	#defaults to true for soundness
+    retVal := "true";
+    answer = false;
+    nosub1 =false;
+    nosub2 =false;
+    Array1: array of string; 
+    Array2: array of string;
+    type1:="";
+    type2:="";
+    if((match(">",type11)&&match("<",type11))||(match(">",type22)&&match("<",type22))){
+        return "There exist generic type.";
+    }
+    else{
+	    if((match("\\[\\]$",type11)||match("\\[\\]$",type22))&&
+	    (!(match("\\[\\]$",type11)&&match("\\[\\]$",type22)))){
+	        return "false";
+	    }
+	    else{
+		    if(match("\\[\\]$",type11)&&match("\\[\\]$",type22)){
+		        Array1 = splitall(type11, "\\[");
+		        Array2 = splitall(type22, "\\[");
+		        type1=standard(Array1[0]);
+		        type2=standard(Array2[0]);
+		    }
+		    else{
+			    type1=standard(type11);
+			    type2=standard(type22);
+		    }
+
+		    if((isPrimitive(type1)||isPrimitive(type2))&&(!(isPrimitive(type1)&&isPrimitive(type2)))){
+		            return "false";
+		    }
+		    else if(isPrimitive(type1)&&isPrimitive(type2)) {
+		        if(type1=="int"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="char"){
+		            if (type2=="char")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="byte"){
+		            if (type2=="byte")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="double"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"
+		            ||type2=="double"||type2=="long"||type2=="float")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="short"){
+		            if (type2=="byte"||type2=="short")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="long"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"||type2=="long")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="float"){
+		            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"||type2=="long"||type2=="float")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="boolean"){
+		            if (type2=="boolean")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		        if(type1=="String"){
+		            if (type2=="String")
+		                return "true";
+		            else
+		                return "false";
+		        }
+		    }
+		}
+	}
+    
+    
+    qualifiedNameType1: string = type1;
+    qualifiedNameType2: string = type2;
+    
+    parentArray: array of string = keys(fullParentage);
+    inProject: bool = false; 
+    foreach(i:int; parentArray[i]) {
+    	if(match(type1, parentArray[i])) {
+    		inProject = true; 
+    	}
+    	else if(match(type2, parentArray[i])) {
+    		inProject = true; 	
+    	}
+    }
+    
+    
+    if(inProject) {
+	    #Type1 
+	    superClassOfType1: string = "";
+	    if(def(fullParentage[qualifiedNameType1])) {
+	    	superClassOfType1 = fullParentage[qualifiedNameType1];
+	    	    
+		    if(match(type2, superClassOfType1)) {
+		    	return type1; 
+		    }
+	    }
+	
+		
+		#Type2
+	    superClassOfType2: string = "";    
+	    if(def(fullParentage[qualifiedNameType2])) {
+	    	superClassOfType2 = fullParentage[qualifiedNameType2];
+	    	    
+		    if(match(type1, superClassOfType2)) {
+		    	return type2; 
+		    }
+	    }
+    }
+	else {
+		return "true";
+	}
+    name = "";
+    str ="";
+    ele ="";
+    clear(check);
+    answer = false;
+    nosub1 =false;
+    nosub2 =false;
+    return retVal;
+};
+
+
+#uses shangxuang's functions. returns true if type1 is compatible with type2
+isCompatibleType := function(type1: string, type2: string): bool {
+	
+	compareToResult: string = "";
+	compareToResult = compareTo(type1, type2, p);
+	
+	if(match(type1, compareToResult)) {
+		return true; 
+	}
+	else if(match(type2, compareToResult)) {
+		return false; 
+	}
+	#if the isCompatible explicitly says not compatible
+	else if(match("^false$", compareToResult)){
+		return false; 
+	}
+	#default to returning true
+	return true; 
+};
+
+##################
+# Leak Functions #
+##################
+
+#tries to match the variables in returnVars against the 3 sources of variables and reports any leaks it finds
+searchForMatch := function(returnVars: string, methodName: string, methodVarDecls: string, methodParamString: string, classVarString: string,
+			fullAliasMap: map[string] of string, localString: string): int {
+	leakFound: bool = false; 
+	numLeaks: int = 0; 
+	#split returnVars into individual variables 
+	returnVarsArray: array of string = splitall(returnVars, "#");
+	#consider each returned Variable 
+	
+	#declared here to avoid compile errors 
+	matchLocation: string; 
+	varType: string; 
+	matched: bool; 
+	varName: string;
+	 
+	foreach(l: int; returnVarsArray[l]) {
+		varName = "";
+		varName = returnVarsArray[l];
+
+		#First pass - try to match and get the type of the variable 
+		#if, somehow, a blank varName got in here we would skip over it. 
+		if(match("^$", varName)) {continue;}
+		varType = "";
+		matchLocation = "";
+		matched = false;
+		#first see if the var is declared within this method 
+		if(match(varName, methodVarDecls)) {
+			matched = true;
+			varType = getType(methodVarDecls, varName); 
+			matchLocation = "method"; 
+		}
+		#then check if var is declared in the method parameter string 
+		else if(match(varName, methodParamString)) {
+			matched = true;
+			varType = getType(methodParamString, varName); 
+			matchLocation = "parameter";  
+		}
+		#finally, check if the var is declared in the fields for this class  
+		else if(match(varName, classVarString)) {
+			matched = true; 
+			varType = getType(classVarString, varName); 
+			matchLocation = "field";
+			#further, if the var is non-primitive, report it as a leak 
+			if(!isPrimitive(varType)) {
+			    #add this method to the list of leaking methods
+				if(reportLeakedFields) {
+	            	logSet["fieldLeak"] << varName + ":" + varType + " in " + localString; 
+	            }
+	            leakFound = true;  
+	            numLeaks++; 
+	             
+			}
+		}
+		#if the variable doesn't match anything, then report it as a failed match
+		#this can happen because of global variables and third party libraries
+		if(!matched && reportFailedMatches) {
+		    logging["FAILEDMATCH " + localString] << varName + ":" + classVarString + ":" + methodParamString + ":" + methodVarDecls;
+		}
+
+		originalVarName: string = varName; 
+		originalVarType: string = varType; 
+		
+		#Second pass - alias pass
+		aliasString: string = "";
+		if(def(fullAliasMap[varName])) {
+			aliasString = fullAliasMap[varName];
+		}
+		#add the current variable to the aliasString
+		aliasString = buildString(aliasString, varName);
+		aliasArray: array of string = splitall(aliasString, "#");
+		aliasString = "";
+		dupeMap: map[string] of bool; 
+		dupeMap[originalVarName] = true;
+		tempMap: map[string] of bool; 
+		curAlias: string; 
+		tempString: string;
+		
+		while(len(aliasArray) != 0) {
+			curAlias = aliasArray[0];
+			#if this element is in the dupemap, remake aliasArray without this element
+			if(def(dupeMap[curAlias])) {
+				clear(tempMap);
+				length: int = 1; 
+				while(length < len(aliasArray)) {
+					tempString = aliasArray[length];
+					tempMap[tempString] = true; 
+					length++;
+				}
+				aliasArray = keys(tempMap);
+			}
+			#not in the dupemap, add it to the fullAliasMap and add its aliases to aliasArray and do matching
+			else {
+				#add to dupemap 
+				dupeMap[curAlias] = true;
+				#add its aliases to aliasArray 
+				if(def(aliasMap[curAlias])) {
+					newAliasesString: string = aliasMap[curAlias];
+					newAliasArray: array of string = splitall(newAliasesString, "#");
+					newAliasesString = "";
+					aliasArray = aliasArray + newAliasArray;
+					newAliasArray = {""};
+				}
+				#DO the matching
+				varName = curAlias; 
+				#if, somehow, a blank varName got in here we would skip over it. 
+				if(match("^$", varName)) {continue;}
+				varType = "";
+				matchLocation = "";
+				matched = false;
+				#first see if the var is declared within this method 
+				if(match(varName, methodVarDecls)) {
+					matched = true;
+					varType = getType(methodVarDecls, varName); 
+					matchLocation = "method"; 
+				}
+				#then check if var is declared in the method parameter string 
+				else if(match(varName, methodParamString)) {
+					matched = true;
+					varType = getType(methodParamString, varName); 
+					matchLocation = "parameter";  
+				}
+				#finally, check if the var is declared in the fields for this class  
+				else if(match(varName, classVarString)) {
+					matched = true; 
+					varType = getType(classVarString, varName); 
+					matchLocation = "field";
+					#further, if the var is non-primitive, report it as a leak 
+					if(!isPrimitive(varType) && isCompatibleType(varType, originalVarType)) {
+					    #add this method to the list of leaking methods
+						if(reportLeakedFields) {
+			            	logSet["fieldLeak"] << varName + ":" + varType + "[[ALIAS OF " + originalVarName + ":" + originalVarType + "]] at " + localString; 
+			            }
+			            leakFound = true;  
+		            	numLeaks++;
+					}
+				}
+				#if the variable doesn't match anything, then report it as a failed match
+				#this can happen because of global variables and third party libraries
+				if(!matched && reportFailedMatches) {
+				    logging["FAILEDMATCH " + localString] << varName + ":" + classVarString + ":" + methodParamString + ":" + methodVarDecls;
+				}
+			}
+		}
+		aliasArray = {""};
+	}
+	return numLeaks; 
+};
+
+#This function searches through every statement of the given method looking for return statements or method invocations. 
+#Whenever it finds a method invocation or return statement, it checks to see if any of the variables involved are leaks 
+searchForLeaks := function (method: Method, methodVarDecls: string, methodParamString: string,
+	classVarString: string, fullAliasMap: map[string] of string, localString: string, selfMethods: bool): int {
+	leakingMethod: bool = false; 	
+	numLeaks: int = 0; 
+	
+	methodName: string = method.name; 
+	statementStack: stack of Statement; 
+	curStatement: Statement; 
+	#Now that we have all the variable declarations, try to match variables in return 
+	#statements and method invocations to those strings 
+	foreach(k: int; method.statements[k]) { 
+		#add every method to the stack
+		push(statementStack, method.statements[k]);
+		#Check for method invocations
+		methodVars = "";
+		curStatement = method.statements[k];
+		if(!selfMethods) {
+			visit(curStatement, getMethodInvocation);
+		}
+		else {
+			visit(curStatement, getSelfMethodInvocation);
+		} 
+		#if we actually found a method with arguments, then see if they are leaking 
+		if(len(methodVars) > 0) {
+			#split returnVars into individual vars 
+			methodLeaksFoundMethod: int = 0; 
+			methodLeaksFoundMethod = searchForMatch(methodVars, methodName, methodVarDecls, methodParamString,
+					classVarString, fullAliasMap, "MTHDINVO " + localString
+			);
+		    if(methodLeaksFoundMethod != 0) {
+		        leakingMethod = true;  
+	            numLeaks = numLeaks + methodLeaksFoundMethod;    
+		    }
+		} 
+	}
+	#look for return statements 
+	while(len(statementStack) > 0) {
+		curStatement = pop(statementStack);
+		#if this statement has sub-statements, add them to the stack 
+		foreach(l: int; curStatement.statements[l]) {
+			push(statementStack, curStatement.statements[l]);
+		}
+		#if this is a return than try to match the variable 
+		if(curStatement.kind == StatementKind.RETURN) {
+			returnVars = "";
+			visit(curStatement, getReturnVars);  
+			methodLeakFoundReturn: int = 0; 
+			methodLeakFoundReturn = searchForMatch(returnVars, methodName, methodVarDecls, methodParamString,
+					classVarString, fullAliasMap, "RETURN " + localString
+			);
+			returnVars = "";
+		    if(methodLeakFoundReturn != 0) {
+		        leakingMethod = true;  
+	            numLeaks = numLeaks + methodLeakFoundReturn;   
+		    }
+		}
+	}
+	return numLeaks; 
+};
+
+#######################
+# Alias Map Functions #
+#######################
+
+#collects a map of the immediate aliases of each variable in this method. Uses aliasMap global variable
+getAliasMap := function(method: Method): map[string] of string{
+	clear(aliasMap); 
+	foreach(i: int; method.statements[i]) {
+		curStatement: Statement = method.statements[i];
+		visit(curStatement, aliasVisitor); 
+		visit(curStatement, aliasViaMethodVisitor);
+	}
+	return aliasMap;
+};
+
+#Given an alias map, this function will complete it by searching for alias chains. 
+constructFullAliasMap := function(aliasMap: map[string] of string): map[string] of string {
+	fullAliasMap: map[string] of string;
+	#get each variable and construct the full list of aliases for that variable 
+	variables: array of string = keys(aliasMap);
+	dupeMap: map[string] of bool; 
+	tempMap: map[string] of bool;
+	tempString: string; 
+	foreach(k: int; variables[k]) {
+		curOriginal: string = variables[k];
+		
+		#used to prevent infinite loops 
+		clear(dupeMap);
+		dupeMap[curOriginal] = true; 
+		
+		#add each immediate alias to the search set 
+		immediateAliases: string = aliasMap[curOriginal];
+		aliasArray: array of string = splitall(immediateAliases, "#");
+		immediateAliases = "";
+		#find every extended alias 
+		while(len(aliasArray) != 0) {
+			curAlias: string = aliasArray[0];
+			#if this element is in the dupemap, remake aliasArray without this element
+			if(def(dupeMap[curAlias])) {
+				clear(tempMap);
+				length: int = 1; 
+				while(length < len(aliasArray)) {
+					tempString = aliasArray[length];
+					tempMap[tempString] = true; 
+					length++;
+				}
+				aliasArray = keys(tempMap);
+			}
+			#not in the dupemap, add it to the fullAliasMap and add its aliases to aliasArray
+			else {
+				#add to dupemap 
+				dupeMap[curAlias] = true;
+				#add to fullAliasMap
+				curAliasString: string = "";
+				if(def(fullAliasMap[curOriginal])) {
+					curAliasString = fullAliasMap[curOriginal];
+				}
+				fullAliasMap[curOriginal] = buildString(curAliasString, curAlias);
+				
+				#add its aliases to aliasArray 
+				if(def(aliasMap[curAlias])) {
+					newAliasesString: string = aliasMap[curAlias];
+					newAliasArray: array of string = splitall(newAliasesString, "#");
+					newAliasesString = "";
+					aliasArray = aliasArray + newAliasArray;
+					newAliasArray = {""};
+				}
+			}
+		}
+	}
+	return fullAliasMap;
+};
+
+####################
+# Global Variables #
+####################
+
+#This visitor just collects the left hand side of every assignment statement. This is used to determine what 
+#is a global variable 
+getGlobalsVisitor := visitor {
+	before e: Expression -> {
+		if(e.kind == ExpressionKind.ASSIGN) {
+			if(def(e.expressions)) {
+				varName: string = e.expressions[0].variable; 
+				globalString = buildString(globalString, escapeRegex(varName)); 				
+			}
+		}
+	}
+};
+
+#This function creates a map of all of the global variables that are assigned to in this method. 
+getGlobalVars := function(method: Method, classVarString: string, 
+		methodParamString: string, methodVarDecls: string) : map[string] of bool {
+	globalVars: map[string] of bool; 
+	
+	#At every ASSIGN, try to match the variable being assigned to variable. 
+	#If it isn't a method variable declaration, method parameter, or field, then it is a global variable.
+	
+	#get all assigns 
+	globalString = "";
+	foreach(i: int; method.statements[i]) {
+		visit(method.statements[i], getGlobalsVisitor);
+	}
+		
+	#try to match 
+	globals: array of string = splitall(globalString, "#");
+	foreach(i: int; globals[i]) {
+		varName: string = globals[i];
+		if(!match(varName, classVarString) && !match(varName, methodParamString) 
+				&& !match(varName, methodVarDecls)){
+			globalVars[varName] = true;
+		}			
+	}
+	
+	return globalVars; 
+};
+
+#Using the curGlobalVarMap global variable, this visitor collects a list of all variables that are assigned 
+#to a global variable. These variables have the potential to be leaks. 
+getAssignedToGlobal := visitor {
+	before e: Expression -> {
+		if (e.kind == ExpressionKind.ASSIGN && def(e.expressions)) {
+			var: string = e.expressions[0].variable; 
+			var = escapeRegex(var);
+			if(def(curGlobalVarMap[var])) {
+				returnVars = "";
+				visit(e.expressions[1],getReturnVars);
+				vars: array of string = splitall(returnVars, "#");
+				returnVars = "";
+				foreach(i: int; vars[i]) {
+					globalString = buildString(globalString, vars[i]);	
+				}
+				vars = {""};
+			}
+		}
+	}
+};
+
+#this function uses the getAssignedToGlobal visitor to collect a list of all variables that are assigned 
+#to a global variable. These variables have the potential to be leaks.
+findVarsAssignedToGlobals := function(method: Method, classVarString: string, methodParamString: string,
+		methodVarDecls: string, globalVarMap: map[string] of bool, localString: string): string {
+	curGlobalVarMap = globalVarMap; 
+	globalString = "";
+	foreach(i: int; method.statements[i]) {
+		visit(method.statements[i], getAssignedToGlobal);
+	}
+	return globalString;
+};
+
+##########
+## Main ##
+##########
+
+
+mapstring: map[string] of int;
+leakmap: map[string] of int;
+
+#if(p.project_url == "https://github.com/localwiki/localwiki"){
+visit(p,visitor{
+    before node: Revision ->{
+        if(match("\\bfix(s|es|ing|ed|up)?\\b", lowercase(node.log))
+        ||match("\\b(error|bug|issue)(s)?\\b",lowercase(node.log))
+        ||match("\\b(bug|issue|fix)(s)?\\b\\s*(#)?\\s*[0-9]+",lowercase(node.log))
+        ||match("\\b(bug|issue|fix)\\b\\s*id(s)?\\s*(=)?\\s*[0-9]+",lowercase(node.log)))
+        {
+            #counts["total"] <<1;
+            foreach(i:int; def(node.files[i]))
+                if(match("\\.java$", node.files[i].name)){
+                    filesname:string =p.project_url+" : "+node.files[i].name;
+                    if(!haskey(mapstring,filesname)){
+                        mapstring[filesname]=0;
+                    }
+                    if(haskey(mapstring,filesname)){
+                        mapstring[filesname]= mapstring[filesname]+1;
+                    }
+                    #counts[p.project_url+" : "+node.files[i].name]<<1;
+                }
+            #logs[format("%s",node.commit_date)] << node.log;
+        }
+    }
+});
+
+#NOTE to make it run on the whole project remmove this if statment 
+#WARNING removing this if statement will create very large outputs
+
+	
+#find immediate parents 
+parents: map[string] of string = findParentClasses(p);
+#find the full inheritance 
+parentage: map[string] of string = computeAllSuperclasses(parents);
+
+#global 
+fullParentage = parentage; 
+
+#get the fields for every class
+fieldMap: map[string] of string = getFields(p);
+#use the fields and full inheritance for every class to find the full list of fields 
+fullFieldMap: map[string] of string = getFullFieldMap(fieldMap, parentage); 
+
+visit(p, visitor {
+	# only look at the latest snapshot
+	before node: CodeRepository -> {
+		snapshot := getsnapshot(node);
+    	foreach (i: int; def(snapshot[i])) {
+    		visit(snapshot[i]);
+    	}
+    	stop;
+	}
+	
+	before namespace: Namespace -> {
+		#visit each class
+		foreach(i: int; namespace.declarations[i]) {
+			class: Declaration = namespace.declarations[i];
+			numLeaks: int = 0;
+			leakingClass: bool = false; 
+			#get a string that has the full list of fields for this class 
+			classVarString: string = getClassVarString(namespace, class, fullFieldMap);
+			
+			#get an array of each method this class declares 
+			methodMap = getMethodsFromClass(class);
+			
+			#these have to be declared here to avoid a compile error. 
+			leakingMethod: bool; 
+			methodName: string; 
+			method: Method; 
+			methodParamString: string; 
+			localString: string; 
+			methodVarDecls: string; 
+			methodAliasMap: map[string] of string;
+			fullAliasMap: map[string] of string;
+			globalVarMap: map[string] of bool;
+			
+			#visit each method - the is the first pass for finding leaks. 
+			#in this pass we don't consider passing a field during a methodinvocation a leak 
+			#if it is to a method defined in this class. 
+			foreach(j: int; class.methods[j]) {
+				leakingMethod = false; 
+			    methodName = class.methods[j].name;
+				method = class.methods[j];
+				#get a list of all the parameters to this method
+				methodParamString = getMethodParams(method);
+				#get a list of all variables declared in the body of this method
+				methodVarDecls = getMethodVarDecls(method);
+				
+				#used for logging
+				localString = p.project_url + "//" + namespace.name + "." + class.name + "." + method.name;
+				
+				#First we try without any aliases - this improves preformance 
+				clear(fullAliasMap);
+				numLeaks = numLeaks + searchForLeaks(method, methodVarDecls, methodParamString, classVarString, fullAliasMap, localString, false);
+				
+				methodVarDecls = "";
+				methodParamString = "";
+				
+				#if we find a leak than mark this method as leaking and move on 
+				if(numLeaks != 0) {
+					methodMap[methodName] = true; 
+					leakingClass = true; 
+					continue;
+				}
+			}
+			foreach(j: int; class.methods[j]) { 
+				leakingMethod = false; 
+			    methodName = class.methods[j].name;
+				method = class.methods[j];
+				#get a list of all the parameters to this method
+				methodParamString = getMethodParams(method);
+				#get a list of all variables declared in the body of this method
+				methodVarDecls = getMethodVarDecls(method);
+				
+				#used for logging
+				localString = p.project_url + "//" + namespace.name + "." + class.name + "." + method.name;
+				
+				#find all the aliases for variables in this method 
+				fullAliasMap = getAliasMap(method);
+				
+				#search for a leak in this method
+				numLeaks = numLeaks + searchForLeaks(method, methodVarDecls, methodParamString, classVarString, fullAliasMap, localString, false);
+				#search for a leak in this method through a global var 
+				globalVarMap = getGlobalVars(method, classVarString, methodParamString, methodVarDecls);
+				clear(curGlobalVarMap);
+				
+				varThroughGlobal: string = findVarsAssignedToGlobals(method, classVarString, methodParamString, methodVarDecls, globalVarMap, localString); 
+				clear(globalVarMap);
+				
+				numLeaks = numLeaks + searchForMatch(varThroughGlobal, methodName, methodVarDecls, methodParamString, classVarString,
+					fullAliasMap, localString);
+					
+				clear(fullAliasMap);
+				methodVarDecls = "";
+				methodParamString = "";
+				varThroughGlobal = "";
+				
+				#if either of these leak types occured than this class leaks and this method leaks. 
+				#Information about which methods in the class leak is used in the second pass. 
+				if(numLeaks != 0) {
+					methodMap[methodName] = true; 
+					leakingClass = true; 
+				}
+			}
+			
+			#do the third pass, where we only search for fields passed to methodInvocations to 
+			#methods in this class. we only do this if we haven't found any leaks for this class yet.
+			foreach(j: int; class.methods[j]) {
+				leakingMethod = false; 
+				method = class.methods[j];
+			    methodName = class.methods[j].name;
+			    localString = p.project_url + "//" + namespace.name + "." + class.name + "." + method.name;
+			    				
+				#Get a string that has a list of every parameter for this method 
+				#get method parameters and variables declared in this method
+				methodParamString = getMethodParams(method);
+				methodVarDecls = getMethodVarDecls(method);
+				#find all the aliases for variables in this method 
+				fullAliasMap = getAliasMap(method);
+				
+				numLeaks = numLeaks + searchForLeaks(method, methodVarDecls, methodParamString, classVarString, fullAliasMap, localString, true);
+				
+				clear(fullAliasMap);
+				methodVarDecls = "";
+				methodParamString = "";
+				
+				if(numLeaks != 0) {
+					leakingClass = true; 
+				}				
+			}
+			#bugnumber:int;
+			bugnumber:map[string] of int;
+			newstr:string=strreplace(namespace.name,".","/",true)+ "/" + class.name;
+			arrofkeys: array of string;
+			arrofkeys = keys(mapstring);
+			foreach(integer:int;def(arrofkeys[integer])){
+			    #logss["int"]<<len(arrofkeys);
+			 #   logss[arrofkeys[i]]<<mapstring[arrofkeys[i]];
+			    k:string= arrofkeys[integer];
+			    if(match(newstr+"\\.",k)){
+			        #counts["hahaha"] << 1;
+			        bugnumber[newstr]=mapstring[k];
+			        #counts1[p.project_url + " : " + newstr][mapstring[k]] << numLeaks;
+			    }
+			}
+			#if(def(bugnumber[newstr]))
+			 #   counts1[p.project_url + " : " + newstr][format(" %d ",bugnumber[newstr])] << numLeaks; 
+			#else
+			 #   counts1[p.project_url + " : " + newstr][format(" %d ",0)] << numLeaks;
+			#leakmap[p.project_url + " : " + newstr] = numLeaks;
+			#leaked class reporting 
+			if(def(bugnumber[newstr])&&bugnumber[newstr]!=0&&leakingClass)
+			    counts["bugleakclass"] <<1;
+			else if(def(bugnumber[newstr])&&bugnumber[newstr]!=0&&!leakingClass)
+			    counts["bugnonleakclass"] <<1;
+			else if((!def(bugnumber[newstr])||bugnumber[newstr]==0)&&leakingClass) {
+				counts["nonbugleakClasses"] << 1;
+			}
+			else if((!def(bugnumber[newstr])||bugnumber[newstr]==0)&&!leakingClass){
+				counts["nonbugnonLeakClasses"] << 1;
+			}
+			else
+			    counts["nonofthem"] << 1;
+		}
+	}
+});
+
+#}

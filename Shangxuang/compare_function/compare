@@ -1,0 +1,280 @@
+### This function return if arg1 is subtype of arg2 or opposite. return "" if no such type in the project or return "no relationship".
+
+## Attention: This function can only detect the user defined classes, which means that it cannot find the inherited classes from in library.
+p: Project = input;
+#counts: output sum[string] of int;
+interface: output collection[string] of string;
+logs: output collection of string;
+#num: output sum of int;
+#hier: map[string] of string;
+#st: stack of string;
+name := "";
+str :="";
+ele :="";
+check : set of string;
+answer := false;
+primitives: array of string = {"byte", "short", "int", "long", "float", "double", "boolean", "char", "String"};
+#out: output collection of string;
+nosub1 :=false;
+nosub2 :=false;
+
+isPrimitive := function(s: string) : bool {
+    foreach(i: int; primitives[i]) {
+        if(match("^" + primitives[i] + "$", s)) {
+            return true;    
+        }
+    }
+    return false; 
+};
+
+id := function(node: Project) {
+    visit(node,visitor{
+            before n: CodeRepository -> {
+                snapshot := getsnapshot(n);
+                    foreach (j: int; def(snapshot[j]))
+                        visit(getast(snapshot[j]));
+                    stop;
+            }
+            before n: Declaration -> 
+                if(n.name == name){
+                    foreach(m: int;  def(n.parents[m])&&n.parents[m].kind==TypeKind.CLASS){
+                        #push(st,n.parents[m].name);
+                        name=n.parents[m].name;
+                        ele = n.parents[m].name;
+                        if(contains(check, ele))
+                        {   
+                            answer =true;
+                            break;
+                        }
+                        else {
+                            add(check,ele);
+                            #logs<<format("%s",ele);
+                            visit(node);
+                        }
+                    }
+                    stop;
+                }
+            });
+};
+standard := function(type1: string) : string {
+    ret:=type1;
+    if(type1=="Integer")
+        ret="int";
+    if(type1=="Double")
+        ret="double";
+    if(type1=="Character")
+        ret="char";
+    if(type1=="string")
+        ret="String";
+    if(type1=="Boolean")
+        ret="boolean";
+    if(type1=="Byte")
+        ret="byte";
+    if(type1=="Short")
+        ret="short";
+    if(type1=="Long")
+        ret="long";
+    if(type1=="Float")
+        ret="float";
+    return ret;
+};
+compareTo := function(type11: string, type22: string, node: Project) : string {
+    retVal := "";
+    answer = false;
+    nosub1 =false;
+    nosub2 =false;
+    Array1: array of string; 
+    Array2: array of string;
+    type1:="";
+    type2:="";
+    if((match(">",type11)&&match("<",type11))||(match(">",type22)&&match("<",type22))){
+        retVal = "There exist generic type.";
+        #logs<<"hahaha1";
+    }
+    else{
+    if((match("\\[\\]$",type11)||match("\\[\\]$",type22))&&
+    (!(match("\\[\\]$",type11)&&match("\\[\\]$",type22)))){
+        retVal = "false";
+    }
+    else{
+    if(match("\\[\\]$",type11)&&match("\\[\\]$",type22)){
+        Array1 = splitall(type11, "\\[");
+        Array2 = splitall(type22, "\\[");
+        type1=standard(Array1[0]);
+        type2=standard(Array2[0]);
+    }
+    else{
+    type1=standard(type11);
+    type2=standard(type22);
+    }
+    #logs<<"hahaha";
+    #logs << format("%s",type1);
+    #logs << format("%s",type2);
+
+    if((isPrimitive(type1)||isPrimitive(type2))&&(!(isPrimitive(type1)&&isPrimitive(type2)))){
+            #logs<<"hahaha2";
+            retVal = "false";
+    }
+    else if(isPrimitive(type1)&&isPrimitive(type2))
+    #else if(type1=="int"&&type2=="int")
+    {
+        #logs<<"hahaha3";
+        if(type1=="int"){
+            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="char"){
+            if (type2=="char")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="byte"){
+            if (type2=="byte")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="double"){
+            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"
+            ||type2=="double"||type2=="long"||type2=="float")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="short"){
+            if (type2=="byte"||type2=="short")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="long"){
+            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"||type2=="long")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="float"){
+            if (type2=="char"||type2=="byte"||type2=="int"||type2=="short"||type2=="long"||type2=="float")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="boolean"){
+            if (type2=="boolean")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+        if(type1=="String"){
+            if (type2=="String")
+                retVal = "true";
+            else
+                retVal = "false";
+        }
+    }
+    else{
+	visit(node,visitor{
+	    before n: CodeRepository -> {
+            snapshot := getsnapshot(n);
+            foreach (i: int; def(snapshot[i]))
+                visit(getast(snapshot[i]));
+            stop;
+        }
+        before n:Declaration ->{
+            if(n.name == type1){
+                #logs<<format("%s",n.name);
+                add(check,n.name);
+                foreach(i: int; def(n.parents[i])&&n.parents[i].kind==TypeKind.CLASS){
+                    #logs<<format("%s",n.parents[i]);
+                    name=n.parents[i].name;
+                    ele = n.parents[i].name;
+                    if(contains(check, ele)){   
+                        answer =true;
+                        break;
+                    }
+                    else {
+                        add(check,ele);
+                        #logs<<format("%s",ele);
+                        id(node);
+                    }
+                }
+                
+                if(!answer){
+                    #interface[node.name][str] << "no cyclic problem";
+                    #if(len(check)==4)
+                     #   logs<<"should print";
+                    if(contains(check, type2))
+                    {
+                        #logs<<"should print";
+                        retVal = type1+" is subtype of "+type2;
+                    }
+                    else{
+                        nosub1=true;
+                    }
+                }
+                else{
+                    retVal = "Cyclic inheritance hierarchy";
+                }
+                clear(check);
+                answer = false;
+            }
+            if(n.name==type2){
+                add(check,n.name);
+                foreach(i: int; def(n.parents[i])&&n.parents[i].kind==TypeKind.CLASS){
+                    name=n.parents[i].name;
+                    ele = n.parents[i].name;
+                    if(contains(check, ele)){   
+                        answer =true;
+                        break;
+                    }
+                    else {
+                        add(check,ele);
+                        id(node);
+                    }
+                }
+                
+                if(!answer){
+                    #interface[node.name][str] << "no cyclic problem";
+                    if(contains(check, type1))
+                    {
+                        retVal=type2+" is subtype of "+type1;
+                    }
+                    else{
+                        nosub2=true;
+                    }
+                }
+                else{
+                    retVal= "Cyclic inheritance hierarchy";
+                }
+                clear(check);
+                answer = false;
+            }
+            if(nosub1 && nosub2){
+                retVal= "no relationship";
+            }
+
+        }
+        
+	});
+    }
+    }
+    }
+    name = "";
+    str ="";
+    ele ="";
+    clear(check);
+    answer = false;
+    nosub1 =false;
+    nosub2 =false;
+    return retVal;
+};
+
+visit(p,visitor{
+    before node: Project ->
+        if(node.project_url == "https://github.com/ceylon/ceylon-compiler") 
+            if(isPrimitive("int")&&isPrimitive("int"))
+                interface["test"] << compareTo("byte","int",node);
+});

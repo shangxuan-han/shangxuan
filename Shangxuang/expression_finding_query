@@ -1,0 +1,203 @@
+p: Project = input;
+logs: output collection[string] of string;
+counts: output sum of int;
+ANNOTATION:=0;
+ARRAYINDEX:=0;
+ARRAYINIT:=0;	
+ASSIGN:=0;
+ASSIGN_ADD:=0;	
+ASSIGN_BITAND:=0;	
+ASSIGN_BITOR:=0;
+ASSIGN_BITXOR:=0;
+ASSIGN_DIV:=0;
+ASSIGN_LSHIFT:=0;	
+ASSIGN_MOD:=0;
+ASSIGN_MULT:=0;
+ASSIGN_RSHIFT:=0;
+ASSIGN_SUB	:=0;
+ASSIGN_UNSIGNEDRSHIFT:=0;	
+BIT_AND	:=0;
+BIT_LSHIFT	:=0;
+BIT_NOT	:=0;
+BIT_OR	:=0;
+BIT_RSHIFT	:=0;
+BIT_UNSIGNEDRSHIFT:=0;	
+BIT_XOR	:=0;
+CAST	:=0;
+CONDITIONAL	:=0;
+EQ	:=0;
+GT	:=0;
+GTEQ	:=0;
+LITERAL	:=0;
+LOGICAL_AND	:=0;
+LOGICAL_NOT	:=0;
+LOGICAL_OR	:=0;
+LT	:=0;
+LTEQ	:=0;
+METHODCALL	:=0;
+NEQ	:=0;
+NEW	:=0;
+NEWARRAY:=0;	
+NULLCOALESCE:=0;	
+OP_ADD	:=0;
+OP_DEC	:=0;
+OP_DIV	:=0;
+OP_INC	:=0;
+OP_MOD	:=0;
+OP_MULT	:=0;
+OP_SUB	:=0;
+OTHER:=0;
+TYPECOMPARE:=0;	
+VARACCESS	:=0;
+VARDECL:=0;
+visit(p, visitor{
+    before node: Expression ->{
+        if(node.kind==ExpressionKind.ANNOTATION&&ANNOTATION==0){
+            ANNOTATION=1;
+            logs[p.project_url]<< format("%s",node) + "is ANNOTATION";}
+        if(node.kind==ExpressionKind.ARRAYINDEX&&ARRAYINDEX==0){
+            ARRAYINDEX=1;
+            logs[p.project_url]<<format("%s",node) + "is ARRAYINDEX";}
+        if(node.kind==ExpressionKind.ARRAYINIT&&ARRAYINIT==0){
+            ARRAYINIT=1;
+            logs[p.project_url]<<format("%s",node) + "is ARRAYINIT";}
+        if(node.kind==ExpressionKind.ASSIGN&&ASSIGN==0){
+            ASSIGN=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN";}
+        if(node.kind==ExpressionKind.ASSIGN_ADD&&ASSIGN_ADD==0){
+            ASSIGN_ADD=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_ADD";}
+        if(node.kind==ExpressionKind.ASSIGN_BITAND&&ASSIGN_BITAND==0){
+            ASSIGN_BITAND=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_BITAND";}
+        if(node.kind==ExpressionKind.ASSIGN_BITOR&&ASSIGN_BITOR==0){
+            ASSIGN_BITOR=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_BITOR";}
+        if(node.kind==ExpressionKind.ASSIGN_BITXOR&&ASSIGN_BITXOR==0){
+            ASSIGN_BITXOR=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_BITXOR";}
+        if(node.kind==ExpressionKind.ASSIGN_DIV&&ASSIGN_DIV==0){
+            ASSIGN_DIV=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_DIV";}
+        if(node.kind==ExpressionKind.ASSIGN_LSHIFT&&ASSIGN_LSHIFT==0){
+            ASSIGN_LSHIFT=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_LSHIFT";}
+        if(node.kind==ExpressionKind.ASSIGN_MOD&&ASSIGN_MOD==0){
+            ASSIGN_MOD=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_MOD";}
+        if(node.kind==ExpressionKind.ASSIGN_MULT&&ASSIGN_MULT==0){
+            ASSIGN_MULT=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_MULT";}
+        if(node.kind==ExpressionKind.ASSIGN_RSHIFT&&ASSIGN_RSHIFT==0){
+            ASSIGN_RSHIFT=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_RSHIFT";}
+        if(node.kind==ExpressionKind.ASSIGN_SUB&&ASSIGN_SUB==0){
+            ASSIGN_SUB=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_SUB";}
+        if(node.kind==ExpressionKind.ASSIGN_UNSIGNEDRSHIFT&&ASSIGN_UNSIGNEDRSHIFT==0){
+            ASSIGN_UNSIGNEDRSHIFT=1;
+            logs[p.project_url]<<format("%s",node) + "is ASSIGN_UNSIGNEDRSHIFT";}
+        if(node.kind==ExpressionKind.BIT_AND&&BIT_AND==0){
+            BIT_AND=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_AND";}
+        if(node.kind==ExpressionKind.BIT_LSHIFT&&BIT_LSHIFT==0){
+            BIT_LSHIFT=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_LSHIFT";}
+        if(node.kind==ExpressionKind.BIT_NOT&&BIT_NOT==0){
+            BIT_NOT=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_NOT";}
+        if(node.kind==ExpressionKind.BIT_OR&&BIT_OR==0){
+            BIT_OR=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_OR";}
+        if(node.kind==ExpressionKind.BIT_RSHIFT&&BIT_RSHIFT==0){
+            BIT_RSHIFT=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_RSHIFT";}
+        if(node.kind==ExpressionKind.BIT_UNSIGNEDRSHIFT&&BIT_UNSIGNEDRSHIFT==0){
+            BIT_UNSIGNEDRSHIFT=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_UNSIGNEDRSHIFT";}
+        if(node.kind==ExpressionKind.BIT_XOR&&BIT_XOR==0){
+            BIT_XOR=1;
+            logs[p.project_url]<<format("%s",node) + "is BIT_XOR";}
+        if(node.kind==ExpressionKind.CAST&&CAST==0){
+            CAST=1;
+            logs[p.project_url]<<format("%s",node) + "is CAST";}
+        if(node.kind==ExpressionKind.CONDITIONAL&&CONDITIONAL==0){
+            CONDITIONAL=1;
+            logs[p.project_url]<<format("%s",node) + "is CONDITIONAL";}
+        if(node.kind==ExpressionKind.EQ&&EQ==0){
+            EQ=1;
+            logs[p.project_url]<<format("%s",node) + "is EQ";}
+        if(node.kind==ExpressionKind.GT&&GT==0){
+            GT=1;
+            logs[p.project_url]<<format("%s",node) + "is GT";}
+        if(node.kind==ExpressionKind.GTEQ&&GTEQ==0){
+            GTEQ=1;
+            logs[p.project_url]<<format("%s",node) + "is GTEQ";}
+        if(node.kind==ExpressionKind.LITERAL&&LITERAL==0){
+            LITERAL=1;
+            logs[p.project_url]<<format("%s",node) + "is LITERAL";}
+        if(node.kind==ExpressionKind.LOGICAL_AND&&LOGICAL_AND==0){
+            LOGICAL_AND=1;
+            logs[p.project_url]<<format("%s",node) + "is LOGICAL_AND";}
+        if(node.kind==ExpressionKind.LOGICAL_NOT&&LOGICAL_NOT==0){
+            LOGICAL_NOT=1;
+            logs[p.project_url]<<format("%s",node) + "is LOGICAL_NOT";}
+        if(node.kind==ExpressionKind.LOGICAL_OR&&LOGICAL_OR==0){
+            LOGICAL_OR=1;
+            logs[p.project_url]<<format("%s",node) + "is LOGICAL_OR";}
+        if(node.kind==ExpressionKind.LT&&LT==0){
+            LT=1;
+            logs[p.project_url]<<format("%s",node) + "is LT";}
+        if(node.kind==ExpressionKind.LTEQ&&LTEQ==0){
+            LTEQ=1;
+            logs[p.project_url]<<format("%s",node) + "is LTEQ";}
+        if(node.kind==ExpressionKind.METHODCALL&&METHODCALL==0){
+            METHODCALL=1;
+            logs[p.project_url]<<format("%s",node) + "is METHODCALL";}
+        if(node.kind==ExpressionKind.NEQ&&NEQ==0){
+            NEQ=1;
+            logs[p.project_url]<<format("%s",node) + "is NEQ";}
+        if(node.kind==ExpressionKind.NEW&&NEW==0){
+            NEW=1;
+            logs[p.project_url]<<format("%s",node) + "is NEW";}
+        if(node.kind==ExpressionKind.NEWARRAY&&NEWARRAY==0){
+            NEWARRAY=1;
+            logs[p.project_url]<<format("%s",node) + "is NEWARRAY";}
+        if(node.kind==ExpressionKind.NULLCOALESCE&&NULLCOALESCE==0){
+            NULLCOALESCE=1;
+            logs[p.project_url]<<format("%s",node) + "is NULLCOALESCE";}
+        if(node.kind==ExpressionKind.OP_ADD&&OP_ADD==0){
+            OP_ADD=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_ADD";}
+        if(node.kind==ExpressionKind.OP_DEC&&OP_DEC==0){
+            OP_DEC=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_DEC";}
+        if(node.kind==ExpressionKind.OP_DIV&&OP_DIV==0){
+            OP_DIV=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_DIV";}
+        if(node.kind==ExpressionKind.OP_INC&&OP_INC==0){
+            OP_INC=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_INC";}
+        if(node.kind==ExpressionKind.OP_MOD&&OP_MOD==0){
+            OP_MOD=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_MOD";}
+        if(node.kind==ExpressionKind.OP_MULT&&OP_MULT==0){
+            OP_MULT=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_MULT";}
+        if(node.kind==ExpressionKind.OP_SUB&&OP_SUB==0){
+            OP_SUB=1;
+            logs[p.project_url]<<format("%s",node) + "is OP_SUB";}
+        if(node.kind==ExpressionKind.OTHER&&OTHER==0){
+            OTHER=1;
+            logs[p.project_url]<<format("%s",node) + "is OTHER";}
+        if(node.kind==ExpressionKind.TYPECOMPARE&&TYPECOMPARE==0){
+            TYPECOMPARE=1;
+            logs[p.project_url]<<format("%s",node) + "is TYPECOMPARE";}
+        if(node.kind==ExpressionKind.VARACCESS&&VARACCESS==0){
+            VARACCESS=1;
+            logs[p.project_url]<<format("%s",node) + "is VARACCESS";}
+        if(node.kind==ExpressionKind.VARDECL&&VARDECL==0){
+            VARDECL=1;
+            logs[p.project_url]<<format("%s",node) + "is VARDECL";}
+    }
+});

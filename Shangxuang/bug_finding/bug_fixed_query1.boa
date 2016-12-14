@@ -1,0 +1,98 @@
+## This query measures the number of Java project types that can potentially violate 
+##       visibility-based encapsulated inheritance and encapsulation for actors 
+##       with and without subactors
+##
+
+p: Project = input;
+pure: output collection[string] of string;
+other: output collection[string] of string;
+logs: output collection of string;
+path := "";
+
+breaksEncInh := false;
+breaksEnc := false;
+
+violatingEncInh: output sum of int;
+violatingEnc: output sum of int;
+all: output sum of int;
+
+violatingProjectsEnc : output sum of int; 
+violatingProjectsInh : output sum of int; 
+isViolatingProjectEnc := false;
+isViolatingProjectInh := false;
+##This is the part I add to check the situation that no visibility modifier used in the field variable.
+novisibility := function(Var: Variable): bool {
+    ifall(m: int;def(Var.modifiers[m])&&Var.modifiers[m].kind!=ModifierKind.VISIBILITY){
+        return true;
+    }
+    return false;
+};
+
+
+
+#if (p.project_url == "https://github.com/1mobilesuper/1mobile_download"){
+visit(p, visitor {
+	before n:Project -> { 
+	    ifall (i: int; !match(`^java$`, lowercase(n.programming_languages[i]))) stop;
+	    isViolatingProjectEnc = false;
+	    isViolatingProjectInh = false;
+	}
+	after n:Project -> {
+	    if(isViolatingProjectInh) violatingProjectsInh<<1;
+	    if(isViolatingProjectEnc) violatingProjectsEnc<<1;
+	    isViolatingProjectEnc = false;
+	    isViolatingProjectInh = false;
+	}
+
+	before n: CodeRepository -> {
+		snapshot := getsnapshot(n);
+		foreach (i: int; def(snapshot[i]))
+			visit(snapshot[i]);
+		stop;
+	}
+    
+    before chfl: ChangedFile -> path = chfl.name; 
+	#after chfl: ChangedFile -> path = "";
+
+    before decl: Declaration -> {
+        cls := decl.name;
+        parent := "";
+        if(decl.kind==TypeKind.CLASS){
+            all <<1;
+            breaksEncInh = false;
+            ## violating encapsulated inheritance
+			foreach (i: int; ((has_modifier_public(decl.fields[i]) 
+			          || has_modifier_protected(decl.fields[i])
+			          || has_modifier_namespace(decl.fields[i]))
+			          || novisibility(decl.fields[i]))
+			         &&
+			         (!has_modifier_final(decl.fields[i])))
+                breaksEncInh = true;
+            if(breaksEncInh){    
+		        violatingEncInh << 1;
+                breaksEncInh = false;
+                isViolatingProjectInh = true;
+
+            }
+
+            breaksEnc = false;
+            ## violating type encapsulation
+			foreach (i: int; ((has_modifier_public(decl.fields[i]) 
+			          || has_modifier_namespace(decl.fields[i]))
+			          || novisibility(decl.fields[i]))
+			         &&
+			         (!has_modifier_final(decl.fields[i])))
+                breaksEnc = true;
+            if(breaksEnc){    
+		        violatingEnc << 1;
+                breaksEnc = false;
+                isViolatingProjectEnc = true;
+    
+            }
+
+        }
+    }
+
+}
+);
+#}

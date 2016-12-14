@@ -1,0 +1,115 @@
+## This query measures the number of actor types that can potentially violate 
+##       visibility-based encapsulated inheritance and encapsulation for actors 
+##       with and without subactors
+##
+p: Project = input;
+pure: output collection[string] of string;
+other: output collection[string] of string;
+
+pureActors: map[string] of string;
+PureActorsNum: output sum of int;
+ViolatingInhPureActorsNum: output sum of int;
+ViolatingEnPureActorsNum: output sum of int;
+
+otherActors: map[string] of string;
+OtherActorsNum: output sum of int;
+ViolatingInhOtherActorsNum: output sum of int;
+ViolatingEnOtherActorsNum: output sum of int;
+
+path := "";
+
+isNonFinalNonPrivate := false;
+isNonFinalNonPrivateNonProtected := false;
+
++##This is the part I add to check the situation that no visibility modifier used in the field variable.
+novisibility := function(Var: Variable): bool {
+    ifall(m: int;def(Var.modifiers[m])&&Var.modifiers[m].kind!=ModifierKind.VISIBILITY){
+        return true;
+    }
+    return false;
+};
+
+visit(p, visitor {
+    before n: Project -> ifall (i: int; !match(`^java$`, lowercase(n.programming_languages[i]))) stop;
+	
+	before n: CodeRepository -> {
+		snapshot := getsnapshot(n);
+		foreach (i: int; def(snapshot[i]))
+			visit(snapshot[i]);
+		stop;
+	}
+    
+    before chfl: ChangedFile -> path = chfl.name; 
+	#after chfl: ChangedFile -> path = "";
+
+    before decl: Declaration -> {
+        cls := decl.name;
+        parent := "";
+        foreach (k: int; def(decl.parents[k])) {
+            if (decl.parents[k].kind == TypeKind.CLASS ) {
+                parent = decl.parents[k].name;
+                if (parent == "UntypedActor" || parent == "TypedActor") {
+                    pureActors[cls] = path;
+                    PureActorsNum << 1;
+
+                    ## violating encapsulated inheritance (non final non private)                    
+                    isNonFinalNonPrivate = false;
+        			foreach (i: int; ((has_modifier_public(decl.fields[i]) 
+        			          || has_modifier_protected(decl.fields[i]))
+        			           || novisibility(decl.fields[i]))
+        			         &&
+        			         (!has_modifier_final(decl.fields[i])))
+                        isNonFinalNonPrivate = true;
+                    if(isNonFinalNonPrivate){    
+				        ViolatingInhPureActorsNum << 1;
+                        isNonFinalNonPrivate = false;
+                    }
+                    
+                    ## violating encapsulation (non final non private non protected)
+                    isNonFinalNonPrivateNonProtected = false;
+        			foreach (i: int; ((has_modifier_public(decl.fields[i]))
+        			             || novisibility(decl.fields[i]))
+        			         &&
+        			         (!has_modifier_final(decl.fields[i])))
+                        isNonFinalNonPrivateNonProtected = true;
+                    if(isNonFinalNonPrivateNonProtected){    
+				        ViolatingEnPureActorsNum << 1;
+                        isNonFinalNonPrivateNonProtected = false;
+                    }
+                    
+
+                }
+                else if (haskey(pureActors, parent) || haskey(otherActors, parent)){
+                    otherActors[cls] = path;
+                    OtherActorsNum << 1;
+                    
+                    ## violating encapsulated inheritance
+                    isNonFinalNonPrivate = false;
+        			foreach (i: int; ((has_modifier_public(decl.fields[i]) 
+        			          || has_modifier_protected(decl.fields[i]))
+        			           || novisibility(decl.fields[i]))
+        			         &&
+        			         (!has_modifier_final(decl.fields[i])))
+                        isNonFinalNonPrivate = true;
+                    if(isNonFinalNonPrivate){    
+				        ViolatingInhOtherActorsNum << 1; 
+                        isNonFinalNonPrivate = false;
+                    }
+                    
+                    ## violating encapsulation 
+                    isNonFinalNonPrivateNonProtected = false;
+        			foreach (i: int; ((has_modifier_public(decl.fields[i]))
+        			        || novisibility(decl.fields[i]))
+        			         &&
+        			         (!has_modifier_final(decl.fields[i])))
+                        isNonFinalNonPrivateNonProtected = true;
+                    if(isNonFinalNonPrivateNonProtected){    
+				        ViolatingEnOtherActorsNum << 1;
+                        isNonFinalNonPrivateNonProtected = false;
+                    }
+                    
+                }
+            }
+        }
+    }
+});

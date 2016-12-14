@@ -1,0 +1,29 @@
+# Empty Boa file!
+p: Project = input;
+counts: output top(10) of string weight int;
+classmap : map[string] of string;
+classnum : output sum[string] of int;
+DUI : output sum[string] of int;
+MAPCLASS: map[string] of int;
+MAPDUI: map[string] of int;
+MAP: map[string] of string;
+logs: output collection of string;
+visit(p, visitor{
+	before node: Project ->{
+	    class: int = 0;
+	    D: int = 0;
+		visit(node, visitor{
+			before n: Declaration ->{
+				class++;
+				foreach(m: int;  def(n.parents[m])&&n.parents[m].kind==TypeKind.CLASS){
+					D++;
+				}
+			}
+		});
+		if(class!=0||D!=0){
+		    str:=format("%s",class)+","+format("%s",D);
+		    #str:="a"+","+"b";
+		    logs << format("%s",str);
+		}
+	}
+});

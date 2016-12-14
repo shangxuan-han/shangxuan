@@ -1,0 +1,17 @@
+# I use "https://github.com/raymondBourges/esup-commons-import" this project as a test.
+
+
+For part of the inheritence structure:  
+interface[MonitoringMethodCallMap][MonitoringMethodCallMap < HashMap<String, MonitoringMethodCall>] = no cyclic problem
+interface[MonitoringMethodCall][MonitoringMethodCall] = no cyclic problem
+interface[MonitoringMethodInterceptor][MonitoringMethodInterceptor] = no cyclic problem
+interface[MultiUrlLdapContextSource][MultiUrlLdapContextSource < LdapContextSource] = no cyclic problem
+interface[MultiplePropertiesResourceBundle][MultiplePropertiesResourceBundle < ResourceBundle < MultiplePropertiesResourceBundle < ResourceBundle < MultiplePropertiesResourceBundle < ResourceBundle] = There is at least one cyclic inheritance hierarchy
+
+
+
+compareTo("MonitoringMethodCallMap","HashMap",node);  return: ""
+compareTo("MonitoringMethodCallMap","HashMap<String, MonitoringMethodCall>",node);  return:	MonitoringMethodCallMap is subtype of HashMap<String, MonitoringMethodCall>
+compareTo("MultiUrlLdapContextSource","LdapContextSource",node);  return:MultiUrlLdapContextSource is subtype of LdapContextSource
+compareTo("MultiplePropertiesResourceBundle","ResourceBundle",node);  return: 	There is at least one cyclic inheritance hierarchy
+compareTo("LdapContextSource","MultiUrlLdapContextSource",node);  return:MultiUrlLdapContextSource is subtype of LdapContextSource

@@ -1,0 +1,32 @@
+4. MATURITY QUERY:
+	A) all project in big dataset in github returns 0 for all developers.
+	B) We don't have download information in Boa, So the download information is out;
+	C) For 700 commits, and 2000 statements munimum as maturity criteria only less than 10% projects are mature.
+Before Monday:
+	Big data: (>200 commits && >2000 statements) : 12515 mature Projects, 12261 buggy projects.
+	Big data:  (>700 commits && >2000 statements) : 4712 mature Projects, 4687 buggy projects.
+	Big data:  ( >2000 statements) : 91063 mature Projects, 59930 buggy projects.
+	Big data:  (>200 commits) : 14411 mature Projects, 14103 buggy projects.
+	Big data:  (>700 commits) : 5418 mature Projects, 5384 buggy projects.
+	Small data:  (>200 commits && >2000 statements) : 16 mature Projects, 16 buggy projects.
+	Small data:  (>700 commits && >2000 statements) : 6 mature Projects, 6 buggy projects.
+	Small data:  ( >2000 statements) : 104 mature Projects, 66 buggy projects.
+	Small data:  (>200 commits ) : 17 mature Projects, 17 buggy projects.
+	Small data:  (>700 commits ) : 6 mature Projects, 6 buggy projects.
+	
+	
+	a: 2000 statements : 
+			Only statement condition: 42690
+			42689
+			42706
+			big data with 2000 statement: code 42666
+	b: using epoch : 
+	c: remove time criteria : big data with expression edition: code 42569
+	
+	Final query location:
+	Big data:42950
+	Small data:42949
+	
+	final query with criteria of 1 bug
+	Big data:43163
+	Small data:43161

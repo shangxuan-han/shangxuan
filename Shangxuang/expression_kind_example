@@ -1,0 +1,49 @@
+ANNOTATION	@JsonSubTypes.Type(name="Amnplifier", value = Amplifier.class).
+ARRAYINDEX	att[i].
+ARRAYINIT	int[] delta = {7,15,23,31,39,47,55,63};
+ASSIGN	mItemList = new ArrayList<String>();
+ASSIGN_ADD	startCell += maxCellNum;
+ASSIGN_BITAND	accumulateValues &= (descriptor.valueIndex != 0);
+ASSIGN_BITOR	hasNullValue |= store.hasNull(i);
+ASSIGN_BITXOR	hash ^= us.car.hashCode();
+ASSIGN_DIV	distX /= dist;
+ASSIGN_LSHIFT	 flag <<= 1;
+ASSIGN_MOD	distX %= dist;
+ASSIGN_MULT	distX *= dist;
+ASSIGN_RSHIFT	par1 >>= 4;
+ASSIGN_SUB	par1 -= 4;
+ASSIGN_UNSIGNEDRSHIFT	sum >>>= 63;
+BIT_AND	((tmp << bitShift) & MASK_63)
+BIT_LSHIFT	(tmp << bitShift)
+BIT_NOT	~Frame.ICONIFIED
+BIT_OR	intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+BIT_RSHIFT	(tmp >> bitShift)
+BIT_UNSIGNEDRSHIFT	millisOfSecond >>> 8
+BIT_XOR	isPlug1 ^ isPlug2
+CAST	Graphics2D g2 = (Graphics2D )g;
+CONDITIONAL	(setTitle.isEmpty() ? "No Title" : setTitle);
+EQ (i==m)
+GT	(i>m)
+GTEQ	(i>=m)
+LITERAL	(null != user.getGroups()) : null is literal kind
+LOGICAL_AND	 (isNumber&&isInt)
+LOGICAL_NOT	(!isNumber)
+LOGICAL_OR	(isNumber||isInt)
+LT	(i<m)
+LTEQ	(i<=m)
+METHODCALL	c.equalsIgnoreCase("api") 
+NEQ	(i!=m)
+NEW	new TestSuite(AppTest.class);
+NEWARRAY	new String[] {"/hu/bearmaster/itm/common/context/spring-context.xml"});
+NULLCOALESCE	
+OP_ADD	1+2
+OP_DEC	numberOfSessions--;
+OP_DIV	4/8
+OP_INC	numberOfSessions++;
+OP_MOD	4%8
+OP_MULT	1*2
+OP_SUB	1-2
+OTHER	
+TYPECOMPARE	(res instanceof ErrorResponse)
+VARACCESS	att or i in att[i].
+VARDECL    OAuthConsumer consumer = null;

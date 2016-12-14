@@ -1,0 +1,90 @@
+p: Project = input;
+counts: output sum[string] of int;
+interface: output collection[string][string] of string;
+logs: output collection of string;
+num: output sum of int;
+hier: map[string] of string;
+st: stack of string;
+name := "";
+str :="";
+ele :="";
+check : set of string;
+answer := false;
+out: output collection of string;
+
+id := visitor{
+            before n: Project ->
+                if(n.project_url != "https://github.com/raymondBourges/esup-commons-import") 
+                    stop;
+            before n: CodeRepository -> {
+                snapshot := getsnapshot(n);
+                    foreach (j: int; def(snapshot[j]))
+                        visit(getast(snapshot[j]));
+                    stop;
+            }
+            before n: Declaration -> 
+                if(n.name == name){
+                    foreach(m: int;  def(n.parents[m])&&n.parents[m].kind==TypeKind.CLASS){
+                        #push(st,n.parents[m].name);
+                        name=n.parents[m].name;
+                        ele = n.parents[m].name;
+                        str = str+" < "+ele;
+                        if(contains(check, ele))
+                        {   
+                            answer =true;
+                            break;
+                        }
+                        else {
+                            add(check,ele);
+                            visit(p);
+                        }
+                    }
+                    stop;
+                }
+            };
+            
+visit(p,visitor{
+    before node: Project ->
+        if(node.project_url != "https://github.com/raymondBourges/esup-commons-import") 
+            stop;
+    before node: CodeRepository -> {
+        snapshot := getsnapshot(node);
+        foreach (i: int; def(snapshot[i]))
+            visit(getast(snapshot[i]));
+        stop;
+    }
+    before node: Declaration -> {
+    #    if(node.name=="ClientProxy"){
+        add(check,node.name);
+        str = node.name;
+        foreach(i: int; def(node.parents[i])&&node.parents[i].kind==TypeKind.CLASS){
+            name=node.parents[i].name;
+            #push(st,node.parents[i].name);
+            ele = node.parents[i].name;
+            str = str+" < "+ele;
+            if(contains(check, ele))
+            {   
+                answer =true;
+                break;
+            }
+            else {
+                add(check,ele);
+                visit(p,id);
+            }
+        }
+           # interface[node.name]  << pop(st);
+        clear(check);
+        #interface[node.name] << str;
+        if(!answer){
+            interface[node.name][str] << "no cyclic problem";
+        }
+        else{
+            interface[node.name][str] << "There is at least one cyclic inheritance hierarchy";
+        }
+        str = "";
+        answer = false;
+        stop;
+    }
+    #}
+    
+});

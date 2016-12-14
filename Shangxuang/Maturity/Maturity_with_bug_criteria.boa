@@ -1,0 +1,83 @@
+##The criteria of finding maturity:
+#1: The Project must have at least 10 classes;
+#2: There must be at least 1000 statements;
+#3: There must be at least 50 revisions.
+#4: There must be at least one bug.
+#This query will output the number of mature project in data set
+#This query will also output the number of basic project, which basic project means the
+#project has at least one class in it.
+
+
+p: Project = input;
+logs: output collection[string] of string;
+logsint: output collection[string] of int;
+counts: output sum[string] of int;
+coun:=0;
+
+getnumbugs := function(proj:Project) : int{
+    ret:int=0;
+    visit(proj,visitor{
+        before node: Revision ->{
+            if(match("\\bfix(s|es|ing|ed|up)?\\b", lowercase(node.log))
+            ||match("\\b(error|bug|issue)(s)?\\b",lowercase(node.log))
+            ||match("\\b(bug|issue|fix)(s)?\\b\\s*(#)?\\s*[0-9]+",lowercase(node.log))
+            ||match("\\b(bug|issue|fix)\\b\\s*id(s)?\\s*(=)?\\s*[0-9]+",lowercase(node.log)))
+            {
+                ret++;
+            }
+        }
+    });
+    return ret;
+};
+getnumclass := function(proj:Project) : int{
+	ret:int=0;
+	visit(proj,visitor{
+		before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+    		foreach (i: int; def(snapshot[i])) {
+    			visit(snapshot[i]);
+    		}
+    		stop;
+		}
+		before node:Declaration ->{
+			ret++;
+		}
+	});
+	return ret;
+};
+
+getnumstatement := function(proj:Project) : int{
+	ret:int=0;
+	visit(proj,visitor{
+		before node: CodeRepository -> {
+			snapshot := getsnapshot(node);
+    		foreach (i: int; def(snapshot[i])) {
+    			visit(snapshot[i]);
+    		}
+    		stop;
+		}
+		before node:Statement ->{
+			ret++;
+		}
+	});
+	return ret;
+};
+getnumcommit := function(proj:Project) : int{
+	ret:int=0;
+	visit(proj,visitor{
+		before node: CodeRepository -> {
+			ret=len(node.revisions);
+		}
+	});
+	return ret;
+};
+
+numberofclass:int=getnumclass(p);
+numberofstatement:int=getnumstatement(p);
+numberofcommit:int=getnumcommit(p);
+numberofbug:int=getnumbugs(p);
+if(numberofclass>=10&&numberofstatement>=1000&&numberofcommit>50&&numberofbug>1)
+    counts["mature"]<<1;
+    
+if(numberofclass>=1)
+    counts["basic"]<<1;

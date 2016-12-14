@@ -1,0 +1,71 @@
+p: Project = input;
+logs: output collection[string] of string;
+counts: output sum of int;
+AndroidManifest := false;
+onCreate := false;
+strins := false;
+styles := false;
+apk :=false;
+layout :=false;
+res := false;
+str :="";
+import :=false;
+startService :=false;
+visit(p, visitor{
+            before node: ChangedFile ->{
+                if(match(`androidmanifest.xml`,lowercase(node.name)))
+                    AndroidManifest = true;
+                if(match(`.apk`,lowercase(node.name)))
+                    apk = true;
+                if(match(`strings.xml`,lowercase(node.name)))
+                    strins =true;
+                if(match(`styles.xml`,lowercase(node.name)))
+                    styles = true;
+                if (match(`layout`,lowercase(node.name)))
+                    layout = true;
+                if(match(`res`,lowercase(node.name)))
+                    res = true;
+            }
+            before node: ASTRoot ->
+            foreach(i: int; def(node.imports[i]))
+                if(match("android", lowercase(node.imports[i])))
+                    import = true;
+                    
+            before node: Method ->{
+                if(match(`oncreate`,lowercase(node.name)))
+                    onCreate = true;
+                if(match(`startservice`,lowercase(node.name)))
+                    startService = true;
+            }
+            after node: Project ->{
+                if(import){
+                    co := 0;
+                    if(AndroidManifest){
+                        logs[p.project_url] << str+"AndroidManifest";
+                        co++;}
+                    if(apk){
+                        logs[p.project_url] << str+"apk";
+                         co++;}
+                    if(strins){
+                        logs[p.project_url] << str+"strings";
+                         co++;}
+                    if(styles){
+                        logs[p.project_url] << str+"styles";
+                         co++;}
+                    if(layout){
+                        logs[p.project_url] << str+"layout";
+                         co++;}
+                    if(res){
+                        logs[p.project_url] << str+"res";
+                         co++;}
+                    if(onCreate){
+                        logs[p.project_url] << str+"oncreate";
+                         co++;}
+                    if(startService){
+                        logs[p.project_url] << str+"startservice";
+                        co++;}
+                    if(co>=3) 
+                        counts << 1;
+                }
+            }
+});

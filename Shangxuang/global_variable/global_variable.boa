@@ -1,0 +1,110 @@
+###This query can output the global variable used in the project(https://github.com/mairbek/webelement-wrappers). if you want to change the project, just replace the url by new url.
+
+p: Project = input;
+logs: output collection of string;
+fields: set of string;
+counts: output sum of int;
+
+#if(match(`.\..`,"no.xy")){
+ #   logs["str"]<<substring("no.x9561951949",strfind(".","no.x956.1951949")+1);
+#}
+
+visit(p,visitor{
+     before node: Project->
+        if(node.project_url != "https://github.com/mairbek/webelement-wrappers")
+            stop;
+    before node: Declaration ->
+        foreach(i: int; def(node.fields[i]))
+        {
+            ifall(k: int; def(node.fields[i].modifiers[k])&&node.fields[i].modifiers[k].visibility!=Visibility.PRIVATE)
+            {
+                exists(m: int; def(node.fields[i].modifiers[m])&&node.fields[i].modifiers[m].kind==ModifierKind.STATIC)
+                {
+                    add(fields,node.fields[i].name);
+                    #logs << format("%s","nnnnnnn"+node.fields[i].name);
+                }
+            }
+        }
+});
+
+visit(p,visitor{
+    before node: Project->
+        if(node.project_url != "https://github.com/mairbek/webelement-wrappers")
+            stop;
+    before n: CodeRepository -> {
+                snapshot := getsnapshot(n);
+                    foreach (j: int; def(snapshot[j]))
+                        visit(getast(snapshot[j]));
+                    stop;
+            }
+    before node: Declaration ->{
+        localfields: set of string;
+        foreach(i: int; def(node.fields[i])){
+            add(localfields, node.fields[i].name);
+            #logs<<format("%s","!!!!!!!!!!"+node.fields[i].name);
+            visit(node.fields[i], visitor{
+                 before n: Expression ->{
+                    if(n.kind==ExpressionKind.VARACCESS){
+                        name:string =n.variable;
+                        if(!(contains(fields,name)||contains(localfields,name)))
+                        {
+                            logs << format("%s",name);
+                            counts<<1;
+                        }
+                    }
+                 }
+            });
+        }
+        
+        visit(node, visitor{
+            before node: Method ->
+            {
+                methodarg: set of string;
+                local: set of string;
+                foreach(i: int; def(node.arguments[i]))
+                {
+                        add(methodarg, node.arguments[i].name);
+                }
+                visit(node, visitor{
+                    before n: Statement ->{
+                        if(n.kind==StatementKind.EXPRESSION && n.expression.kind==ExpressionKind.VARDECL){
+                            foreach(i: int; def(n.expression.variable_decls[i]))
+                                add(local, n.expression.variable_decls[i].name);
+                        }
+                        foreach(i: int;def(n.initializations[i])&&n.initializations[i].kind ==ExpressionKind.VARDECL){
+                            add(local, n.initializations[i].variable_decls[i].name);
+                        }
+                        if(def(n.variable_declaration)){
+                            add(local, n.variable_declaration.name);
+                        }
+                    }
+                    before n: Expression ->
+                        if(n.kind==ExpressionKind.VARACCESS){
+                            #logs << format("%s","s");
+                            name: string = n.variable;
+                            #if(name=="segundos"){
+                             #   if(contains(localfields,"segundos")){
+                              #      logs<<format("%s","nodaye");
+                               # }
+                            #}
+                            if(!(contains(methodarg,name)||contains(local,name)||contains(localfields,name)))
+                            {
+                                    #&&contains(localfields,name)
+                                    logs << format("%s",name);
+                                    counts<<1;
+                            }
+                        }
+                });
+             }
+        
+        });
+    }
+   
+    #before node: Expression ->
+     #   {
+      #      if(match(`.\..`,node.variable)){
+       #         logs["str"]<<format("%s",node);
+        #        #counts <<1;
+         #   }
+        #}
+});
